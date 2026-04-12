@@ -1,0 +1,114 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// 书籍表
+model Book {
+  id           Int          @id @default(autoincrement())
+  title        String       @db.VarChar(500)
+  author       String?      @db.VarChar(500)
+  isbn         String?      @db.VarChar(20)
+  publisher    String?      @db.VarChar(200)
+  coverUrl     String?      @map("cover_url") @db.Text
+  categoryId   Int?         @map("category_id")
+  verifyStatus VerifyStatus @default(not_found) @map("verify_status")
+  verifySource String?      @map("verify_source") @db.VarChar(50)
+  rawOcrText   String?      @map("raw_ocr_text") @db.Text
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  category Category?  @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  boxBooks BoxBook[]
+
+  @@map("books")
+}
+
+// 箱子表
+model Box {
+  id          Int      @id @default(autoincrement())
+  boxUid      String   @unique @map("box_uid") @db.VarChar(20)
+  name        String   @db.VarChar(200)
+  description String?  @db.Text
+  bookCount   Int      @default(0) @map("book_count")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  boxBooks BoxBook[]
+
+  @@map("boxes")
+}
+
+// 箱子-书籍关联表
+model BoxBook {
+  id      Int      @id @default(autoincrement())
+  boxId   Int      @map("box_id")
+  bookId  Int      @map("book_id")
+  addedAt DateTime @default(now()) @map("added_at")
+
+  box  Box  @relation(fields: [boxId], references: [id], onDelete: Cascade)
+  book Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@unique([boxId, bookId])
+  @@map("box_books")
+}
+
+// 分类表
+model Category {
+  id       Int    @id @default(autoincrement())
+  name     String @db.VarChar(100)
+  parentId Int?   @map("parent_id")
+
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children Category[] @relation("CategoryTree")
+  books    Book[]
+
+  @@map("categories")
+}
+
+// 扫描记录表
+model ScanRecord {
+  id              Int      @id @default(autoincrement())
+  mode            ScanMode
+  boxId           Int?     @map("box_id")
+  photoPath       String?  @map("photo_path") @db.Text
+  ocrResult       Json?    @map("ocr_result")
+  extractedTitles Json?    @map("extracted_titles")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@map("scan_records")
+}
+
+// 用户设置表
+model UserSetting {
+  id              Int        @id @default(autoincrement())
+  regionMode      RegionMode @default(mainland) @map("region_mode")
+  llmProvider     String?    @map("llm_provider") @db.VarChar(50)
+  llmApiKey       String?    @map("llm_api_key") @db.VarChar(500)
+  llmEndpoint     String?    @map("llm_endpoint") @db.VarChar(500)
+  llmModel        String?    @map("llm_model") @db.VarChar(100)
+  llmSupportsSearch Boolean  @default(false) @map("llm_supports_search")
+
+  @@map("user_settings")
+}
+
+enum VerifyStatus {
+  matched
+  uncertain
+  not_found
+  manual
+}
+
+enum ScanMode {
+  preclassify
+  boxing
+}
+
+enum RegionMode {
+  mainland
+  overseas
+}
