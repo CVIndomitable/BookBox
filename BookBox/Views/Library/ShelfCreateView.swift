@@ -1,32 +1,28 @@
 import SwiftUI
 
-/// 新建箱子视图
-struct BoxCreateView: View {
+/// 新建书架视图
+struct ShelfCreateView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
+    @State private var location = ""
     @State private var description = ""
     @State private var isSaving = false
     @State private var errorMessage: String?
 
     /// 所属书库 ID
     var libraryId: Int?
-    var onCreated: ((Box) -> Void)?
+    var onCreated: ((Shelf) -> Void)?
 
     var body: some View {
         Form {
-            Section("箱子信息") {
-                TextField("箱子名称", text: $name)
+            Section("书架信息") {
+                TextField("书架名称", text: $name)
+                TextField("位置描述（可选）", text: $location)
                 TextField("备注（可选）", text: $description, axis: .vertical)
                     .lineLimit(3...6)
             }
-
-            Section {
-                Text("编号将在创建后自动生成，格式：YYYYMMDD-NNN")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
-        .navigationTitle("新建箱子")
+        .navigationTitle("新建书架")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -36,7 +32,7 @@ struct BoxCreateView: View {
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button("创建") {
-                    createBox()
+                    createShelf()
                 }
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
             }
@@ -51,17 +47,18 @@ struct BoxCreateView: View {
         }
     }
 
-    private func createBox() {
+    private func createShelf() {
         isSaving = true
         Task {
             do {
-                let request = BoxRequest(
+                let request = ShelfRequest(
                     name: name.trimmingCharacters(in: .whitespaces),
+                    location: location.isEmpty ? nil : location,
                     description: description.isEmpty ? nil : description,
                     libraryId: libraryId
                 )
-                let box = try await NetworkService.shared.createBox(request)
-                onCreated?(box)
+                let shelf = try await NetworkService.shared.createShelf(request)
+                onCreated?(shelf)
                 dismiss()
             } catch {
                 errorMessage = error.chineseDescription
@@ -73,6 +70,6 @@ struct BoxCreateView: View {
 
 #Preview {
     NavigationStack {
-        BoxCreateView()
+        ShelfCreateView()
     }
 }

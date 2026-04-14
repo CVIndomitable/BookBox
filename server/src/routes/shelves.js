@@ -4,15 +4,15 @@ import { parseId, parsePagination, paginationResponse } from '../utils/validate.
 
 const router = Router();
 
-// 更新容器的 book_count（统一用 COUNT 重算）
-async function updateBoxCount(tx, boxId) {
+// 更新书架的 book_count（统一用 COUNT 重算）
+async function updateShelfCount(tx, shelfId) {
   const count = await tx.book.count({
-    where: { locationType: 'box', locationId: boxId },
+    where: { locationType: 'shelf', locationId: shelfId },
   });
-  await tx.box.update({ where: { id: boxId }, data: { bookCount: count } });
+  await tx.shelf.update({ where: { id: shelfId }, data: { bookCount: count } });
 }
 
-// 获取所有箱子列表（支持按书库筛选）
+// 获取所有书架列表（支持按书库筛选）
 router.get('/', async (req, res, next) => {
   try {
     const where = {};
@@ -20,88 +20,67 @@ router.get('/', async (req, res, next) => {
       where.libraryId = parseId(req.query.libraryId, '书库 ID');
     }
 
-    const boxes = await prisma.box.findMany({
+    const shelves = await prisma.shelf.findMany({
       where,
       orderBy: { createdAt: 'desc' },
     });
-    res.json({ data: boxes });
+    res.json({ data: shelves });
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     next(err);
   }
 });
 
-// 新建箱子（在事务内生成编号，避免竞态）
+// 新建书架
 router.post('/', async (req, res, next) => {
   try {
-    const { name, description, libraryId } = req.body;
+    const { name, location, description, libraryId } = req.body;
 
     if (!name) {
-      return res.status(400).json({ error: '箱子名称不能为空' });
+      return res.status(400).json({ error: '书架名称不能为空' });
     }
 
-    const box = await prisma.$transaction(async (tx) => {
-      const today = new Date();
-      const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
-      const prefix = dateStr + '-';
+    const data = { name, location, description };
+    if (libraryId) {
+      data.libraryId = parseId(libraryId, '书库 ID');
+    }
 
-      const lastBox = await tx.box.findFirst({
-        where: { boxUid: { startsWith: prefix } },
-        orderBy: { boxUid: 'desc' },
-      });
+    const shelf = await prisma.shelf.create({ data });
 
-      let seq = 1;
-      if (lastBox) {
-        const lastSeq = parseInt(lastBox.boxUid.split('-')[1], 10);
-        seq = lastSeq + 1;
-      }
-
-      const boxUid = `${prefix}${String(seq).padStart(3, '0')}`;
-
-      const data = { boxUid, name, description };
-      if (libraryId) {
-        data.libraryId = parseId(libraryId, '书库 ID');
-      }
-
-      return tx.box.create({ data });
-    });
-
-    res.status(201).json(box);
+    res.status(201).json(shelf);
   } catch (err) {
-    if (err.code === 'P2002') {
-      return res.status(409).json({ error: '箱子编号冲突，请重试' });
-    }
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     next(err);
   }
 });
 
-// 获取箱子详情及其中的书
+// 获取书架详情及其中的书（分页）
 router.get('/:id', async (req, res, next) => {
   try {
-    const id = parseId(req.params.id, '箱子 ID');
-    const { page, pageSize, skip, take } = parsePagination(req.query, 50);
+    const id = parseId(req.params.id, '书架 ID');
+    const { page, pageSize, skip, take } = parsePagination(req.query);
 
-    const box = await prisma.box.findUnique({ where: { id } });
+    const shelf = await prisma.shelf.findUnique({ where: { id } });
 
-    if (!box) {
-      return res.status(404).json({ error: '箱子不存在' });
+    if (!shelf) {
+      return res.status(404).json({ error: '书架不存在' });
     }
 
     const [books, total] = await Promise.all([
       prisma.book.findMany({
-        where: { locationType: 'box', locationId: id },
+        where: { locationType: 'shelf', locationId: id },
         include: { category: true },
         skip,
         take,
         orderBy: { createdAt: 'desc' },
       }),
       prisma.book.count({
-        where: { locationType: 'box', locationId: id },
+        where: { locationType: 'shelf', locationId: id },
       }),
     ]);
 
     res.json({
-      ...box,
+      ...shelf,
       books,
       pagination: paginationResponse(page, pageSize, total),
     });
@@ -111,96 +90,99 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-// 更新箱子信息
+// 更新书架信息
 router.put('/:id', async (req, res, next) => {
   try {
-    const id = parseId(req.params.id, '箱子 ID');
-    const { name, description } = req.body;
+    const id = parseId(req.params.id, '书架 ID');
+    const { name, location, description } = req.body;
 
-    const box = await prisma.box.update({
+    const data = {};
+    if (name !== undefined) data.name = name;
+    if (location !== undefined) data.location = location;
+    if (description !== undefined) data.description = description;
+
+    const shelf = await prisma.shelf.update({
       where: { id },
-      data: {
-        ...(name !== undefined && { name }),
-        ...(description !== undefined && { description }),
-      },
+      data,
     });
 
-    res.json(box);
+    res.json(shelf);
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     if (err.code === 'P2025') {
-      return res.status(404).json({ error: '箱子不存在' });
+      return res.status(404).json({ error: '书架不存在' });
     }
     next(err);
   }
 });
 
-// 删除箱子（书不删除，只重置位置，并记录日志）
+// 删除书架（书的 location 重置为 none，并记录日志）
 router.delete('/:id', async (req, res, next) => {
   try {
-    const id = parseId(req.params.id, '箱子 ID');
+    const id = parseId(req.params.id, '书架 ID');
 
-    const box = await prisma.box.findUnique({ where: { id } });
-    if (!box) {
-      return res.status(404).json({ error: '箱子不存在' });
+    const shelf = await prisma.shelf.findUnique({ where: { id } });
+    if (!shelf) {
+      return res.status(404).json({ error: '书架不存在' });
     }
 
     await prisma.$transaction(async (tx) => {
-      // 查找箱内所有书籍，为每本书写日志
-      const booksInBox = await tx.book.findMany({
-        where: { locationType: 'box', locationId: id },
+      // 查找书架上所有书籍，为每本书写日志
+      const booksOnShelf = await tx.book.findMany({
+        where: { locationType: 'shelf', locationId: id },
         select: { id: true },
       });
 
-      if (booksInBox.length > 0) {
+      if (booksOnShelf.length > 0) {
         // 批量写入日志
         await tx.bookLog.createMany({
-          data: booksInBox.map((b) => ({
+          data: booksOnShelf.map((b) => ({
             bookId: b.id,
             action: 'move',
-            fromType: 'box',
+            fromType: 'shelf',
             fromId: id,
             toType: 'none',
             method: 'manual',
-            note: `箱子「${box.name}」被删除，书籍自动移出`,
+            note: `书架「${shelf.name}」被删除，书籍自动移出`,
           })),
         });
 
         // 重置书的位置
         await tx.book.updateMany({
-          where: { locationType: 'box', locationId: id },
+          where: { locationType: 'shelf', locationId: id },
           data: { locationType: 'none', locationId: null },
         });
       }
 
-      await tx.box.delete({ where: { id } });
+      await tx.shelf.delete({ where: { id } });
     });
 
-    res.json({ message: '箱子已删除' });
+    res.json({ message: '书架已删除' });
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     if (err.code === 'P2025') {
-      return res.status(404).json({ error: '箱子不存在' });
+      return res.status(404).json({ error: '书架不存在' });
     }
     next(err);
   }
 });
 
-// 向箱子中添加书籍
+// 批量将书放入书架
 router.post('/:id/books', async (req, res, next) => {
   try {
-    const boxId = parseId(req.params.id, '箱子 ID');
+    const shelfId = parseId(req.params.id, '书架 ID');
     const { bookIds } = req.body;
 
     if (!Array.isArray(bookIds) || bookIds.length === 0) {
       return res.status(400).json({ error: '请提供书籍 ID 列表' });
     }
 
-    const box = await prisma.box.findUnique({ where: { id: boxId } });
-    if (!box) {
-      return res.status(404).json({ error: '箱子不存在' });
+    const shelf = await prisma.shelf.findUnique({ where: { id: shelfId } });
+    if (!shelf) {
+      return res.status(404).json({ error: '书架不存在' });
     }
 
+    // 获取这些书的当前位置，用于记录日志
     const books = await prisma.book.findMany({
       where: { id: { in: bookIds } },
     });
@@ -217,7 +199,7 @@ router.post('/:id/books', async (req, res, next) => {
       // 更新书的位置
       await tx.book.updateMany({
         where: { id: { in: bookIds } },
-        data: { locationType: 'box', locationId: boxId },
+        data: { locationType: 'shelf', locationId: shelfId },
       });
 
       // 用 COUNT 重算旧容器的 book_count
@@ -234,8 +216,8 @@ router.post('/:id/books', async (req, res, next) => {
         }
       }
 
-      // 用 COUNT 重算目标箱子的 book_count
-      await updateBoxCount(tx, boxId);
+      // 用 COUNT 重算目标书架的 book_count
+      await updateShelfCount(tx, shelfId);
 
       // 批量写入日志
       await tx.bookLog.createMany({
@@ -244,32 +226,32 @@ router.post('/:id/books', async (req, res, next) => {
           action: 'move',
           fromType: book.locationType || 'none',
           fromId: book.locationId,
-          toType: 'box',
-          toId: boxId,
+          toType: 'shelf',
+          toId: shelfId,
           method: 'manual',
         })),
       });
     });
 
-    res.json({ message: `已添加 ${bookIds.length} 本书` });
+    res.json({ message: `已将 ${bookIds.length} 本书放入书架` });
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     next(err);
   }
 });
 
-// 从箱子中移除书籍
+// 从书架移走一本书（location 重置为 none）
 router.delete('/:id/books/:bookId', async (req, res, next) => {
   try {
-    const boxId = parseId(req.params.id, '箱子 ID');
+    const shelfId = parseId(req.params.id, '书架 ID');
     const bookId = parseId(req.params.bookId, '书籍 ID');
 
     const book = await prisma.book.findFirst({
-      where: { id: bookId, locationType: 'box', locationId: boxId },
+      where: { id: bookId, locationType: 'shelf', locationId: shelfId },
     });
 
     if (!book) {
-      return res.status(404).json({ error: '该书不在此箱子中' });
+      return res.status(404).json({ error: '该书不在此书架上' });
     }
 
     await prisma.$transaction(async (tx) => {
@@ -278,21 +260,21 @@ router.delete('/:id/books/:bookId', async (req, res, next) => {
         data: { locationType: 'none', locationId: null },
       });
 
-      await updateBoxCount(tx, boxId);
+      await updateShelfCount(tx, shelfId);
 
       await tx.bookLog.create({
         data: {
           bookId,
           action: 'remove',
-          fromType: 'box',
-          fromId: boxId,
+          fromType: 'shelf',
+          fromId: shelfId,
           toType: 'none',
           method: 'manual',
         },
       });
     });
 
-    res.json({ message: '已从箱子中移除' });
+    res.json({ message: '已从书架移走' });
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     next(err);

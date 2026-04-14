@@ -1,95 +1,129 @@
-# BookBox - 书籍整理与装箱管理系统
+# BookBox V2 - 书籍整理与装箱管理系统
 
 ## 项目概述
 
-一个用于整理和管理实体书籍的系统。用户通过 iPhone 拍照识别书脊/封面上的书名，支持两种工作模式：预分类模式（快速浏览分类）和装箱模式（将书籍录入数据库并关联到物理箱子）。装箱模式下会联网校验识别结果的准确性。
+一个用于整理和管理实体书籍的系统。用户通过 iPhone 拍照，由多模态大模型（MiMo）识别书名，支持两种工作模式：预分类模式（快速浏览分类）和装箱模式（将书籍录入数据库并关联到物理箱子或书架）。系统支持语音交互，用户可通过全局悬浮麦克风按钮语音管理书库。
+
+### V2 核心变更
+- **多书库（Library）**：支持多个独立书库，顶部切换器选择当前书库，`@AppStorage` 记忆上次查看的书库。分类全局共享，书可跨书库移动。
+- **书架（Shelf）**：新增书架概念，与箱子并列作为书籍存放位置。书架为活跃区域，箱子为归档区域。
+- **统一位置模型**：一本书只能在一个位置（书架/箱子/未归位），通过 `location_type` + `location_id` 字段关联，废弃旧的 `box_books` 中间表。
+- **多模态识别**：用 MiMo 多模态大模型替代旧的 OCR + 规则提取流程，支持任意姿态的书籍识别。LLM 调用在服务器端执行，iOS 客户端不直接调用 AI API。
+- **语音交互**：全局悬浮麦克风按钮，支持自然语言操作书库（移动书、查书、新建书架等）。
+- **操作日志**：`book_logs` 表记录所有书籍操作历史。
+- **服务器地址硬编码**：见 `AppConfig.swift` 和 `docs/部署信息.md`（不提交到 Git）。
 
 ## 技术栈
 
 ### 后端
 - **运行时**：Node.js (LTS)
-- **框架**：Express.js
+- **框架**：Express.js 5.x
 - **数据库**：MySQL 8.x
-- **ORM**：Prisma
+- **ORM**：Prisma 6.x
 - **部署**：CentOS 服务器（上海，国内网络环境）
 - **进程管理**：PM2
+- **项目构建**：XcodeGen（通过 project.yml 生成 Xcode 项目）
 
 ### iOS 客户端
 - **语言**：Swift
 - **最低支持**：iOS 17+
 - **目标设备**：iPhone 15 及以上
-- **OCR**：Apple Vision 框架 (VNRecognizeTextRequest)
-- **本地AI**：Core ML（可选，用于书名提取和分类）
+- **AI 识别**：MiMo 多模态大模型（Anthropic 兼容协议）
+- **OCR（回退）**：Apple Vision 框架 (VNRecognizeTextRequest)
+- **语音**：Speech 框架 (SFSpeechRecognizer)
 - **UI 框架**：SwiftUI
 
 ## 项目结构
 
 ```
 bookbox/
+├── CLAUDE.md                   # 项目说明文档
+├── CONFIGURATION.md            # 配置指南
+├── project.yml                 # XcodeGen 项目配置
 ├── server/                     # Node.js 后端
 │   ├── prisma/
 │   │   └── schema.prisma       # 数据库模型定义
 │   ├── src/
 │   │   ├── index.js            # 入口文件
 │   │   ├── routes/
+│   │   │   ├── libraries.js    # 书库 CRUD 路由
 │   │   │   ├── boxes.js        # 箱子相关路由
-│   │   │   ├── books.js        # 书籍相关路由
+│   │   │   ├── books.js        # 书籍相关路由（含 move、logs）
+│   │   │   ├── shelves.js      # 书架相关路由
 │   │   │   ├── categories.js   # 分类相关路由
-│   │   │   ├── scan.js         # 扫描与识别路由
-│   │   │   └── settings.js     # 用户设置路由
-│   │   ├── services/
-│   │   │   ├── search/
-│   │   │   │   ├── douban.js       # 豆瓣搜索（爬取）
-│   │   │   │   ├── googleBooks.js  # Google Books API
-│   │   │   │   ├── openLibrary.js  # Open Library API
-│   │   │   │   └── searchManager.js # 搜索策略调度器
-│   │   │   ├── llm.js          # 大模型 API 转发
-│   │   │   └── verify.js       # 书籍校验服务
+│   │   │   ├── scans.js        # 扫描记录路由
+│   │   │   ├── settings.js     # 用户设置路由
+│   │   │   ├── logs.js         # 操作日志路由
+│   │   │   ├── library.js      # 书库总览路由（支持 libraryId 筛选）
+│   │   │   └── llm.js          # AI 识别路由（MiMo 调用）
 │   │   ├── middleware/
-│   │   │   └── auth.js         # 认证中间件（简单 token）
+│   │   │   └── auth.js         # 认证中间件（Bearer Token）
 │   │   └── utils/
-│   │       ├── cache.js        # 搜索结果缓存
-│   │       └── rateLimit.js    # 请求频率控制
+│   │       └── prisma.js       # Prisma 客户端单例
 │   ├── package.json
 │   └── .env                    # 环境变量
 │
 └── BookBox/                    # iOS Xcode 项目
     ├── App/
-    │   └── BookBoxApp.swift
+    │   └── BookBoxApp.swift         # 入口 + 全局语音悬浮按钮
     ├── Models/
-    │   ├── Book.swift
-    │   ├── Box.swift
-    │   └── Category.swift
+    │   ├── AppConfig.swift          # 硬编码配置（服务器地址）
+    │   ├── Book.swift               # 书籍模型（含位置字段、libraryId）
+    │   ├── BookLog.swift            # 操作日志模型
+    │   ├── Box.swift                # 箱子模型（含 libraryId）
+    │   ├── Category.swift           # 分类模型（全局共享）
+    │   ├── Library.swift            # 书库模型
+    │   ├── LibraryOverview.swift    # 书库总览模型
+    │   ├── ScanRecord.swift         # 扫描记录模型
+    │   ├── Shelf.swift              # 书架模型（含 libraryId）
+    │   └── UserSettings.swift       # 用户设置模型
     ├── Views/
-    │   ├── HomeView.swift           # 主界面，选择模式
+    │   ├── HomeView.swift           # 主界面
     │   ├── PreClassify/
-    │   │   ├── PreClassifyView.swift     # 预分类模式主界面
+    │   │   ├── PreClassifyView.swift     # 预分类模式（服务器 AI + OCR 回退）
     │   │   └── ClassifyResultView.swift  # 分类结果展示
     │   ├── Boxing/
-    │   │   ├── BoxingView.swift          # 装箱模式主界面
+    │   │   ├── BoxingView.swift          # 装箱模式（服务器 AI + OCR 回退）
     │   │   ├── BoxCreateView.swift       # 新建箱子
     │   │   ├── ScanResultView.swift      # 扫描结果（三色标识）
     │   │   └── BookDetailView.swift      # 书籍详情/编辑
     │   ├── Library/
-    │   │   ├── LibraryView.swift         # 我的书库总览
+    │   │   ├── LibraryView.swift         # 书库总览（顶部书库切换+书架+箱子+全部书籍）
+    │   │   ├── LibraryCreateView.swift   # 新建书库
     │   │   ├── BoxListView.swift         # 箱子列表
-    │   │   └── BoxDetailView.swift       # 单个箱子内容
+    │   │   ├── BoxDetailView.swift       # 单个箱子内容
+    │   │   ├── ShelfDetailView.swift     # 书架详情
+    │   │   └── ShelfCreateView.swift     # 新建书架
     │   ├── Settings/
-    │   │   └── SettingsView.swift        # 设置页
+    │   │   └── SettingsView.swift        # 设置页（MiMo API Key）
     │   └── Components/
     │       ├── CameraView.swift          # 相机组件
-    │       └── BookRow.swift             # 书籍列表行组件
+    │       ├── BookRow.swift             # 书籍列表行组件
+    │       └── VoiceAssistantButton.swift # 全局语音悬浮按钮
     ├── Services/
-    │   ├── OCRService.swift         # Vision OCR 封装
-    │   ├── BookExtractor.swift      # 从 OCR 文本提取书名（规则+可选模型）
-    │   ├── NetworkService.swift     # 网络请求层
+    │   ├── MiMoService.swift        # AI 识别数据模型（RecognizedBook、VoiceCommandResult 等）
+    │   ├── SpeechService.swift      # 语音识别服务
+    │   ├── NetworkService.swift     # 网络请求层（硬编码地址）
+    │   ├── OCRService.swift         # Vision OCR（回退方案）
+    │   ├── BookExtractor.swift      # OCR 书名提取（回退方案）
     │   ├── LLMService.swift         # 大模型 API 调用
-    │   └── LocalMLService.swift     # 本地 Core ML 模型调用
+    │   ├── LocalMLService.swift     # 本地 Core ML 模型
+    │   └── Error+Chinese.swift      # Error 扩展
     └── Resources/
-        └── (可选的 Core ML 模型文件)
+        └── Assets.xcassets          # 资源文件
 ```
 
 ## 数据库设计
+
+### libraries 表
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | INT AUTO_INCREMENT | 主键 |
+| name | VARCHAR(200) | 书库名称 |
+| location | VARCHAR(200) | 位置描述，可为空 |
+| description | TEXT | 备注，可为空 |
+| created_at | DATETIME | 创建时间 |
+| updated_at | DATETIME | 更新时间 |
 
 ### books 表
 | 字段 | 类型 | 说明 |
@@ -101,9 +135,24 @@ bookbox/
 | publisher | VARCHAR(200) | 出版社，可为空 |
 | cover_url | TEXT | 封面图 URL，可为空 |
 | category_id | INT | 外键关联 categories |
-| verify_status | ENUM('matched','uncertain','not_found','manual') | 校验状态 |
-| verify_source | VARCHAR(50) | 校验来源：douban/google/openlibrary/llm/manual |
-| raw_ocr_text | TEXT | 原始 OCR 识别文本，保留用于回溯 |
+| verify_status | VARCHAR(20) | 校验状态：matched/uncertain/not_found/manual |
+| verify_source | VARCHAR(50) | 校验来源：mimo/douban/google/manual |
+| raw_ocr_text | TEXT | 原始识别文本 |
+| location_type | VARCHAR(10) DEFAULT 'none' | 位置类型：shelf/box/none |
+| location_id | INT | 位置 ID（指向 shelves 或 boxes 表） |
+| library_id | INT | 所属书库 ID，可为空 |
+| created_at | DATETIME | 创建时间 |
+| updated_at | DATETIME | 更新时间 |
+
+### shelves 表
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | INT AUTO_INCREMENT | 主键 |
+| name | VARCHAR(200) | 书架名称 |
+| location | VARCHAR(200) | 位置描述，可为空 |
+| description | TEXT | 备注，可为空 |
+| book_count | INT DEFAULT 0 | 书籍数量（冗余字段） |
+| library_id | INT | 所属书库 ID，可为空 |
 | created_at | DATETIME | 创建时间 |
 | updated_at | DATETIME | 更新时间 |
 
@@ -114,169 +163,146 @@ bookbox/
 | box_uid | VARCHAR(20) UNIQUE | 唯一编号，格式 YYYYMMDD-NNN |
 | name | VARCHAR(200) | 箱子名称 |
 | description | TEXT | 备注，可为空 |
-| book_count | INT DEFAULT 0 | 书籍数量（冗余字段，方便查询） |
+| book_count | INT DEFAULT 0 | 书籍数量（冗余字段） |
+| library_id | INT | 所属书库 ID，可为空 |
 | created_at | DATETIME | 创建时间 |
 | updated_at | DATETIME | 更新时间 |
 
-### box_books 表
+### book_logs 表
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | INT AUTO_INCREMENT | 主键 |
-| box_id | INT | 外键关联 boxes |
-| book_id | INT | 外键关联 books |
-| added_at | DATETIME | 入箱时间 |
+| book_id | INT | 关联书籍 |
+| action | VARCHAR(20) | 操作类型：move/add/remove/edit/verify |
+| from_type | VARCHAR(10) | 来源位置类型，可为空 |
+| from_id | INT | 来源 ID，可为空 |
+| to_type | VARCHAR(10) | 目标位置类型，可为空 |
+| to_id | INT | 目标 ID，可为空 |
+| method | VARCHAR(20) DEFAULT 'manual' | 操作方式：voice/manual/scan |
+| raw_input | TEXT | 原始输入（语音文字），可为空 |
+| ai_response | TEXT | AI 解析结果，可为空 |
+| note | TEXT | 备注，可为空 |
+| created_at | DATETIME | 创建时间 |
 
-### categories 表
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT AUTO_INCREMENT | 主键 |
-| name | VARCHAR(100) | 分类名 |
-| parent_id | INT | 父分类 ID，支持多级分类，可为空 |
-
-### scan_records 表
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT AUTO_INCREMENT | 主键 |
-| mode | ENUM('preclassify','boxing') | 扫描模式 |
-| box_id | INT | 关联箱子（装箱模式），可为空 |
-| photo_path | TEXT | 原始照片存储路径 |
-| ocr_result | JSON | OCR 完整识别结果 |
-| extracted_titles | JSON | 提取出的书名列表 |
-| created_at | DATETIME | 扫描时间 |
-
-### user_settings 表
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT AUTO_INCREMENT | 主键 |
-| region_mode | ENUM('mainland','overseas') DEFAULT 'mainland' | 地区模式 |
-| llm_provider | VARCHAR(50) | 大模型服务商：openai/claude/other，可为空 |
-| llm_api_key | VARCHAR(500) | 加密存储的 API Key，可为空 |
-| llm_endpoint | VARCHAR(500) | 自定义 API 地址，可为空 |
-| llm_model | VARCHAR(100) | 模型名称，可为空 |
-| llm_supports_search | BOOLEAN DEFAULT FALSE | 该模型是否支持联网搜索 |
+### categories 表（不变）
+### scan_records 表（不变）
+### user_settings 表（不变）
 
 ## API 设计
 
+### 健康检查（无需认证）
+- `GET    /api/health`
+
+### 书库管理
+- `GET    /api/libraries`          — 获取所有书库列表（附带书籍数量）
+- `POST   /api/libraries`          — 新建书库 `{ name, location?, description? }`
+- `GET    /api/libraries/:id`      — 获取书库详情（含总览统计：书籍数/书架/箱子）
+- `PUT    /api/libraries/:id`      — 更新书库信息
+- `DELETE /api/libraries/:id`      — 删除书库（关联数据 libraryId 置空）
+
+### 书架管理
+- `GET    /api/shelves`            — 获取所有书架列表
+- `POST   /api/shelves`            — 新建书架 `{ name, location?, description? }`
+- `GET    /api/shelves/:id`        — 获取书架详情及其中的书（分页）
+- `PUT    /api/shelves/:id`        — 更新书架信息
+- `DELETE /api/shelves/:id`        — 删除书架（书的 location 重置为 none）
+- `POST   /api/shelves/:id/books`  — 批量将书放入书架 `{ bookIds: [1,2,3] }`
+- `DELETE /api/shelves/:id/books/:bookId` — 从书架移走一本书
+
 ### 箱子管理
 - `GET    /api/boxes`            — 获取所有箱子列表
-- `POST   /api/boxes`            — 新建箱子（返回自动生成的 box_uid）
-- `GET    /api/boxes/:id`        — 获取箱子详情及其中的书
+- `POST   /api/boxes`            — 新建箱子
+- `GET    /api/boxes/:id`        — 获取箱子详情及其中的书（分页）
 - `PUT    /api/boxes/:id`        — 更新箱子信息
-- `DELETE /api/boxes/:id`        — 删除箱子（书不删除，只解除关联）
+- `DELETE /api/boxes/:id`        — 删除箱子（书的 location 重置为 none）
+- `POST   /api/boxes/:id/books`  — 向箱子中添加书籍
+- `DELETE /api/boxes/:id/books/:bookId` — 从箱子中移除一本书
 
 ### 书籍管理
-- `GET    /api/books`            — 获取书籍列表（支持分页、搜索、按分类筛选）
-- `POST   /api/books`            — 新增书籍
-- `GET    /api/books/:id`        — 获取书籍详情
-- `PUT    /api/books/:id`        — 更新书籍信息
+- `GET    /api/books`            — 获取书籍列表（支持 locationType/locationId/shelfId/boxId 筛选）
+- `POST   /api/books`            — 新增书籍（支持 locationType/locationId）
+- `GET    /api/books/:id`        — 获取书籍详情（含位置信息）
+- `PUT    /api/books/:id`        — 更新书籍（支持移动位置）
 - `DELETE /api/books/:id`        — 删除书籍
-- `POST   /api/books/batch`      — 批量新增书籍（装箱模式一次拍照多本）
+- `POST   /api/books/batch`      — 批量新增（支持 locationType/locationId，兼容旧 boxId）
+- `POST   /api/books/:id/move`   — 移动书籍到指定位置
+- `GET    /api/books/:id/logs`   — 获取单本书的操作历史
 
-### 书籍校验
-- `POST   /api/books/verify`     — 校验书名，返回匹配结果
-  - 请求体：`{ "title": "识别出的书名", "region": "mainland" | "overseas" }`
-  - 响应体：`{ "status": "matched|uncertain|not_found", "title": "", "author": "", "isbn": "", "cover_url": "", "source": "douban|google|openlibrary|llm" }`
+### 操作日志
+- `GET    /api/logs`             — 获取全部操作日志（支持分页、按 action/method 筛选）
 
-### 分类
-- `GET    /api/categories`       — 获取分类树
-- `POST   /api/categories`       — 新增分类
-- `PUT    /api/categories/:id`   — 更新分类
-- `DELETE /api/categories/:id`   — 删除分类
+### 书库总览
+- `GET    /api/library/overview` — 书库全貌（支持 `?libraryId=` 按书库筛选）
 
-### 扫描记录
-- `POST   /api/scans`            — 保存一次扫描记录
-- `GET    /api/scans`            — 获取扫描历史
+### AI 识别（服务器端 LLM）
+- `POST   /api/llm/recognize`    — 多模态识别书籍 `{ image: "base64..." }` → `{ books: [{title, author, confidence}] }`
+- `POST   /api/llm/voice-command` — 语音指令解析 `{ text, systemPrompt }` → `{ action, bookTitle, target, reply }`
 
-### 设置
-- `GET    /api/settings`         — 获取用户设置
-- `PUT    /api/settings`         — 更新设置（地区模式、API 配置等）
+### 分类、扫描记录、设置、书籍校验（同 V1）
 
-### 大模型转发
-- `POST   /api/llm/extract`     — 用大模型从 OCR 文本提取书名列表
-- `POST   /api/llm/classify`    — 用大模型对书籍进行分类
-- `POST   /api/llm/search`      — 用大模型联网搜索书籍信息（如果支持）
+## 三色标识系统
 
-## 书籍搜索策略
+MiMo 模式：置信度 → 三色
+- 🟢 **绿色 (high)**：AI 高置信度识别
+- 🟡 **黄色 (medium)**：AI 中置信度
+- 🔴 **红色 (low)**：AI 低置信度
 
-### 大陆模式（mainland）
-搜索优先级：
-1. **豆瓣搜索**（爬取 `search.douban.com`）— 中文书最全
-2. **Open Library API** (`openlibrary.org/search.json`) — 英文书补充
-3. **大模型联网搜索**（如果用户配了且支持联网）— 兜底
-4. 以上都未匹配 → 标红 `not_found`
+OCR 回退模式：联网校验 → 三色
+- 🟢 **绿色 (matched)**：联网校验成功
+- 🟡 **黄色 (uncertain)**：部分匹配
+- 🔴 **红色 (not_found)**：未找到匹配
 
-### 非大陆模式（overseas）
-搜索优先级：
-1. **Google Books API** (`googleapis.com/books/v1/volumes`) — 数据最全
-2. **豆瓣搜索** — 中文书补充
-3. **Open Library API** — 补充
-4. **大模型联网搜索** — 兜底
-5. 以上都未匹配 → 标红 `not_found`
+## 识别流程
 
-### 搜索实现注意事项
-- 豆瓣爬取需要：随机 User-Agent、请求间隔 2-3 秒、失败重试
-- 所有搜索结果缓存到 MySQL（书名 → 结果），避免重复请求
-- 搜索用模糊匹配，OCR 识别的书名可能有错别字
-- 瀑布式查询：上一个源匹配到就停止，不继续请求
+1. **AI 模式**（服务器已配置 API Key）：拍照 → iOS 压缩图片 → base64 发到服务器 `/llm/recognize` → 服务器调用 MiMo → 返回书名列表（含置信度）
+2. **OCR 回退**（AI 调用失败时自动回退）：拍照 → 本地 Vision OCR → 规则提取 → 联网校验
 
-## iOS 端核心逻辑
+## 语音交互流程
 
-### OCR 流程
-1. 使用 `VNRecognizeTextRequest`，设置 `recognitionLanguages = ["zh-Hans", "zh-Hant", "en"]`
-2. 设置 `recognitionLevel = .accurate`（精确模式）
-3. 拍照后自动识别，返回文本块列表及其坐标位置
-
-### 书名提取（本地）
-优先级：
-1. **规则提取**：按行分割 OCR 文本，书脊上通常每行就是一个信息项（书名、作者、出版社），取最长/最显眼的行作为书名
-2. **本地小模型**（可选）：如果用户设备支持，用 Core ML 跑一个文本提取模型
-3. **外接大模型 API**（可选）：将完整 OCR 文本发给大模型，提取结构化信息
-
-### 三色标识系统
-- 🟢 **绿色 (matched)**：联网校验成功，书名和作者都匹配上
-- 🟡 **黄色 (uncertain)**：部分匹配或大模型给出的低置信度结果
-- 🔴 **红色 (not_found)**：未找到匹配，需要人工确认
-
-用户可以点击任何一条结果手动编辑修正。
+1. 用户点击悬浮麦克风按钮开始录音
+2. SpeechService 实时语音转文字（本地）
+3. 停止录音后，文字 + 书库上下文发到服务器 `/llm/voice-command`
+4. 服务器调用 MiMo flash 模型，返回 JSON 指令（action/bookTitle/target/reply）
+5. iOS 端解析指令，调用后端 API 执行
+6. 显示执行结果
 
 ## 开发顺序
 
-### Phase 1：后端基础
-1. 初始化 Node.js 项目，配置 Prisma + MySQL
-2. 创建数据库表结构
-3. 实现箱子、书籍、分类的基础 CRUD API
-4. 简单的 token 认证
+### Phase 1-4：V1 基础 ✅ 已完成
 
-### Phase 2：后端搜索服务
-1. 实现豆瓣爬取模块
-2. 实现 Google Books API 模块
-3. 实现 Open Library API 模块
-4. 实现搜索策略调度器（区域模式切换）
-5. 实现搜索缓存
+### Phase V2-A：数据模型和后端 ✅ 已完成
+1. ✅ 修改 Prisma schema（新增 Shelf、BookLog，修改 Book，移除 BoxBook）
+2. ✅ 新建 shelves.js 路由
+3. ✅ 修改 books.js（位置字段 + move + logs）
+4. ✅ 修改 boxes.js（从 box_books 改为 location 字段）
+5. ✅ 新建 logs.js 和 library.js 路由
 
-### Phase 3：iOS 基础
-1. 搭建 SwiftUI 项目框架
-2. 实现相机拍照功能
-3. 实现 Vision OCR
-4. 实现规则式书名提取
-5. 对接后端 API 的网络层
+### Phase V2-B：iOS 数据层 ✅ 已完成
+1. ✅ 新增 Shelf/BookLog/LibraryOverview/AppConfig 模型
+2. ✅ 更新 Book 模型（位置字段）
+3. ✅ NetworkService 新增所有 V2 API
+4. ✅ 硬编码服务器地址
 
-### Phase 4：iOS 功能完善
-1. 实现预分类模式完整流程
-2. 实现装箱模式完整流程（含三色标识）
-3. 实现设置页面（区域切换、API Key 配置）
-4. 实现书库浏览和搜索
+### Phase V2-C：多模态识别 ✅ 已完成
+1. ✅ 新建 MiMoService.swift（数据模型）
+2. ✅ 修改拍照流程（服务器 AI + OCR 回退）
+3. ✅ 设置页简化为 AI 配置
+4. ✅ LLM 调用移至服务器端（llm.js），iOS 端不再直接调 AI API
 
-### Phase 5：智能增强
-1. 对接大模型 API（书名提取、分类、联网搜索）
-2. 可选：集成本地 Core ML 模型
-3. 优化 OCR 识别准确率
+### Phase V2-D：书库界面重构 ✅ 已完成
+1. ✅ LibraryView 分书架/箱子/全部书籍三视图
+2. ✅ 新建 ShelfDetailView/ShelfCreateView
 
-### Phase 6：打磨
-1. UI 优化和动画
-2. 离线模式支持（先存本地，有网时同步）
-3. 错误处理和边界情况
-4. 数据导出功能（CSV/Excel）
+### Phase V2-E：语音交互 ✅ 已完成
+1. ✅ SpeechService.swift
+2. ✅ VoiceAssistantButton.swift
+3. ✅ BookBoxApp 添加全局悬浮按钮
+
+### 待做
+- 数据迁移（box_books → books.location_*，见 docs/UPGRADE-V2.md 第五节）
+- 后端搜索服务（豆瓣/Google Books/Open Library）
+- UI 动画和打磨
+- 离线模式
 
 ## 编码规范
 
@@ -287,31 +313,16 @@ bookbox/
 
 ### Node.js 后端
 - 使用 ES Modules (import/export)
-- 错误处理统一用 try-catch + 错误中间件
-- 环境变量通过 .env 文件管理
-- 日志使用 console.log（开发阶段），生产环境用 winston
+- 错误处理统一用 try-catch + 全局错误中间件
+- 环境变量通过 dotenv + .env 文件管理
+- 书籍位置通过 `books.location_type` + `books.location_id` 关联，不使用数据库外键
+- 所有移动/添加/删除操作需更新容器 `book_count` 并写入 `book_logs`
 
 ### Swift iOS
 - 遵循 Swift 命名规范
 - UI 使用 SwiftUI
 - 网络请求使用 async/await
-- 数据模型遵循 Codable 协议
-
-## 环境变量 (.env)
-
-```
-# 服务器
-PORT=3000
-NODE_ENV=production
-
-# 数据库
-DATABASE_URL=mysql://user:password@localhost:3306/bookbox
-
-# 搜索相关
-GOOGLE_BOOKS_API_KEY=（非大陆模式使用）
-DOUBAN_REQUEST_INTERVAL=3000
-SEARCH_CACHE_TTL=604800
-
-# 认证
-API_TOKEN=（简单 token 认证）
-```
+- 数据模型遵循 Codable 协议（属性名使用 camelCase，与服务器 JSON 键一致，无需自定义 CodingKeys）
+- AI API Key 存储在服务器数据库，iOS 端不保存密钥
+- 服务器地址通过 AppConfig 硬编码
+- AI 识别通过 NetworkService 调用服务器端 `/api/llm/*` 接口，不直接调用第三方 AI API

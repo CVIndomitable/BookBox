@@ -7,25 +7,64 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// 书库表
+model Library {
+  id          Int       @id @default(autoincrement())
+  name        String    @db.VarChar(200)
+  location    String?   @db.VarChar(200)
+  description String?   @db.Text
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  books       Book[]
+  shelves     Shelf[]
+  boxes       Box[]
+
+  @@map("libraries")
+}
+
 // 书籍表
 model Book {
-  id           Int          @id @default(autoincrement())
-  title        String       @db.VarChar(500)
-  author       String?      @db.VarChar(500)
-  isbn         String?      @db.VarChar(20)
-  publisher    String?      @db.VarChar(200)
-  coverUrl     String?      @map("cover_url") @db.Text
-  categoryId   Int?         @map("category_id")
-  verifyStatus VerifyStatus @default(not_found) @map("verify_status")
-  verifySource String?      @map("verify_source") @db.VarChar(50)
-  rawOcrText   String?      @map("raw_ocr_text") @db.Text
-  createdAt    DateTime     @default(now()) @map("created_at")
-  updatedAt    DateTime     @updatedAt @map("updated_at")
+  id            Int       @id @default(autoincrement())
+  title         String    @db.VarChar(500)
+  author        String?   @db.VarChar(500)
+  isbn          String?   @db.VarChar(20)
+  publisher     String?   @db.VarChar(200)
+  coverUrl      String?   @map("cover_url") @db.Text
+  categoryId    Int?      @map("category_id")
+  verifyStatus  String?   @map("verify_status") @db.VarChar(20)  // matched/uncertain/not_found/manual
+  verifySource  String?   @map("verify_source") @db.VarChar(50)
+  rawOcrText    String?   @map("raw_ocr_text") @db.Text
+  locationType  String    @default("none") @map("location_type") @db.VarChar(10)  // shelf/box/none
+  locationId    Int?      @map("location_id")
+  libraryId     Int?      @map("library_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
 
-  category Category?  @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  boxBooks BoxBook[]
+  category      Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  library       Library?  @relation(fields: [libraryId], references: [id], onDelete: SetNull)
+  logs          BookLog[]
 
+  @@index([locationType, locationId])
+  @@index([libraryId])
   @@map("books")
+}
+
+// 书架表
+model Shelf {
+  id          Int       @id @default(autoincrement())
+  name        String    @db.VarChar(200)
+  location    String?   @db.VarChar(200)
+  description String?   @db.Text
+  bookCount   Int       @default(0) @map("book_count")
+  libraryId   Int?      @map("library_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  library     Library?  @relation(fields: [libraryId], references: [id], onDelete: SetNull)
+
+  @@index([libraryId])
+  @@map("shelves")
 }
 
 // 箱子表
@@ -35,26 +74,35 @@ model Box {
   name        String   @db.VarChar(200)
   description String?  @db.Text
   bookCount   Int      @default(0) @map("book_count")
+  libraryId   Int?     @map("library_id")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  boxBooks BoxBook[]
+  library     Library? @relation(fields: [libraryId], references: [id], onDelete: SetNull)
 
+  @@index([libraryId])
   @@map("boxes")
 }
 
-// 箱子-书籍关联表
-model BoxBook {
-  id      Int      @id @default(autoincrement())
-  boxId   Int      @map("box_id")
-  bookId  Int      @map("book_id")
-  addedAt DateTime @default(now()) @map("added_at")
+// 操作日志表
+model BookLog {
+  id          Int       @id @default(autoincrement())
+  bookId      Int?      @map("book_id")
+  action      String    @db.VarChar(20)     // move/add/remove/edit/verify
+  fromType    String?   @map("from_type") @db.VarChar(10)
+  fromId      Int?      @map("from_id")
+  toType      String?   @map("to_type") @db.VarChar(10)
+  toId        Int?      @map("to_id")
+  method      String    @default("manual") @db.VarChar(20)
+  rawInput    String?   @map("raw_input") @db.Text
+  aiResponse  String?   @map("ai_response") @db.Text
+  note        String?   @db.Text
+  createdAt   DateTime  @default(now()) @map("created_at")
 
-  box  Box  @relation(fields: [boxId], references: [id], onDelete: Cascade)
-  book Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  book        Book?     @relation(fields: [bookId], references: [id], onDelete: SetNull)
 
-  @@unique([boxId, bookId])
-  @@map("box_books")
+  @@index([bookId])
+  @@map("book_logs")
 }
 
 // 分类表
@@ -85,22 +133,27 @@ model ScanRecord {
 
 // 用户设置表
 model UserSetting {
-  id              Int        @id @default(autoincrement())
-  regionMode      RegionMode @default(mainland) @map("region_mode")
-  llmProvider     String?    @map("llm_provider") @db.VarChar(50)
-  llmApiKey       String?    @map("llm_api_key") @db.VarChar(500)
-  llmEndpoint     String?    @map("llm_endpoint") @db.VarChar(500)
-  llmModel        String?    @map("llm_model") @db.VarChar(100)
-  llmSupportsSearch Boolean  @default(false) @map("llm_supports_search")
+  id                Int        @id @default(autoincrement())
+  regionMode        RegionMode @default(mainland) @map("region_mode")
+  llmProvider       String?    @map("llm_provider") @db.VarChar(50)
+  llmApiKey         String?    @map("llm_api_key") @db.VarChar(500)
+  llmEndpoint       String?    @map("llm_endpoint") @db.VarChar(500)
+  llmModel          String?    @map("llm_model") @db.VarChar(100)
+  llmSupportsSearch Boolean    @default(false) @map("llm_supports_search")
 
   @@map("user_settings")
 }
 
-enum VerifyStatus {
-  matched
-  uncertain
-  not_found
-  manual
+// 缓存命中率统计表
+model CacheStat {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique @db.VarChar(50)  // 缓存名称，如 "voice_command"
+  hits      Int      @default(0)
+  misses    Int      @default(0)
+  startedAt DateTime @default(now()) @map("started_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("cache_stats")
 }
 
 enum ScanMode {

@@ -1,53 +1,301 @@
 import SwiftUI
 
-/// 书库总览 — 按箱子或分类浏览所有书籍
+/// 书库总览 — 顶部书库切换 + 书架 + 箱子 + 全部书籍
 struct LibraryView: View {
+    @State private var libraries: [Library] = []
+    @State private var selectedLibraryId: Int? = nil
+    @AppStorage("lastLibraryId") private var lastLibraryId: Int = 0
+    @State private var overview: LibraryOverview?
     @State private var books: [Book] = []
     @State private var searchText = ""
     @State private var isLoading = true
+    @State private var isLoadingLibraries = true
     @State private var currentPage = 1
     @State private var totalBooks = 0
     @State private var hasMore = true
     @State private var errorMessage: String?
-    @State private var viewMode: ViewMode = .books
+    @State private var viewMode: ViewMode = .overview
+    @State private var showLibraryCreate = false
 
     enum ViewMode: String, CaseIterable {
+        case overview = "总览"
         case books = "全部书籍"
-        case boxes = "按箱子"
+    }
+
+    /// 当前选中的书库
+    private var selectedLibrary: Library? {
+        libraries.first { $0.id == selectedLibraryId }
     }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // 视图模式切换
+                // 书库选择器
+                libraryPicker
+
                 Picker("查看方式", selection: $viewMode) {
                     ForEach(ViewMode.allCases, id: \.self) { mode in
                         Text(mode.rawValue).tag(mode)
                     }
                 }
                 .pickerStyle(.segmented)
-                .padding()
+                .padding(.horizontal)
+                .padding(.bottom, 8)
 
                 switch viewMode {
+                case .overview:
+                    overviewContent
                 case .books:
                     bookListView
-                case .boxes:
-                    BoxListView()
                 }
             }
             .navigationTitle("书库")
             .searchable(text: $searchText, prompt: "搜索书名或作者")
             .onChange(of: searchText) { _, _ in
-                currentPage = 1
+                if viewMode == .books {
+                    currentPage = 1
+                    books = []
+                    Task { await loadBooks() }
+                }
+            }
+            .onChange(of: selectedLibraryId) { _, newId in
+                // 切换书库时重新加载数据
+                if let newId {
+                    lastLibraryId = newId
+                }
+                overview = nil
                 books = []
-                Task { await loadBooks() }
+                currentPage = 1
+                Task {
+                    await loadOverview()
+                    if viewMode == .books {
+                        await loadBooks()
+                    }
+                }
+            }
+            .sheet(isPresented: $showLibraryCreate) {
+                NavigationStack {
+                    LibraryCreateView { newLibrary in
+                        libraries.append(newLibrary)
+                        selectedLibraryId = newLibrary.id
+                    }
+                }
+            }
+            .alert("加载失败", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("确定") { errorMessage = nil }
+            } message: {
+                Text(errorMessage ?? "")
             }
         }
     }
 
+    // MARK: - 书库选择器
+
+    private var libraryPicker: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                // 新建书库按钮
+                Button {
+                    showLibraryCreate = true
+                } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: "plus")
+                            .font(.title3)
+                        Text("新建")
+                            .font(.caption)
+                    }
+                    .frame(width: 66, height: 56)
+                    .background(.quaternary)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+
+                if isLoadingLibraries {
+                    ProgressView()
+                        .frame(width: 66, height: 56)
+                } else {
+                    ForEach(libraries) { library in
+                        Button {
+                            selectedLibraryId = library.id
+                        } label: {
+                            VStack(spacing: 4) {
+                                Image(systemName: "building.columns")
+                                    .font(.title3)
+                                Text(library.name)
+                                    .font(.caption)
+                                    .lineLimit(1)
+                            }
+                            .frame(width: 66, height: 56)
+                            .background(selectedLibraryId == library.id ? AnyShapeStyle(Color.accentColor.opacity(0.2)) : AnyShapeStyle(.quaternary))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(selectedLibraryId == library.id ? Color.accentColor : .clear, lineWidth: 2)
+                            )
+                        }
+                        .tint(.primary)
+                    }
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+        }
+    }
+
+    // MARK: - 总览
+
+    private var overviewContent: some View {
+        Group {
+            if selectedLibraryId == nil {
+                ContentUnavailableView {
+                    Label("请选择书库", systemImage: "building.columns")
+                } description: {
+                    Text("选择一个书库或新建书库开始管理")
+                } actions: {
+                    Button("新建书库") {
+                        showLibraryCreate = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            } else if isLoading && overview == nil {
+                ProgressView("加载中...")
+                    .frame(maxHeight: .infinity)
+            } else {
+                List {
+                    // 概要信息
+                    if let ov = overview {
+                        Section {
+                            LabeledContent("总书籍数", value: "\(ov.totalBooks) 本")
+                            if ov.unlocated > 0 {
+                                LabeledContent("未归位", value: "\(ov.unlocated) 本")
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                    }
+
+                    // 书架区域
+                    Section {
+                        if let shelves = overview?.shelves, !shelves.isEmpty {
+                            ForEach(shelves) { shelf in
+                                NavigationLink {
+                                    ShelfDetailView(shelfId: shelf.id, shelfName: shelf.name)
+                                } label: {
+                                    shelfRow(shelf)
+                                }
+                            }
+                        } else {
+                            Text("暂无书架")
+                                .foregroundStyle(.secondary)
+                        }
+
+                        NavigationLink {
+                            ShelfCreateView(libraryId: selectedLibraryId)
+                        } label: {
+                            Label("新建书架", systemImage: "plus.circle")
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    } header: {
+                        Label("书架", systemImage: "books.vertical")
+                    }
+
+                    // 箱子区域
+                    Section {
+                        if let boxes = overview?.boxes, !boxes.isEmpty {
+                            ForEach(boxes) { box in
+                                NavigationLink {
+                                    BoxDetailView(box: Box(
+                                        id: box.id,
+                                        boxUid: box.boxUid,
+                                        name: box.name,
+                                        bookCount: box.bookCount
+                                    ))
+                                } label: {
+                                    boxRow(box)
+                                }
+                            }
+                        } else {
+                            Text("暂无箱子")
+                                .foregroundStyle(.secondary)
+                        }
+                    } header: {
+                        Label("箱子（归档）", systemImage: "shippingbox")
+                    }
+                }
+                .listStyle(.insetGrouped)
+            }
+        }
+        .task {
+            await loadLibraries()
+        }
+        .refreshable {
+            await loadLibraries()
+            await loadOverview()
+        }
+    }
+
+    private func shelfRow(_ shelf: ShelfSummary) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "books.vertical.fill")
+                .font(.title2)
+                .foregroundStyle(.blue)
+                .frame(width: 44, height: 44)
+                .background(Color.blue.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(shelf.name)
+                    .font(.body.weight(.medium))
+                if let location = shelf.location {
+                    Text(location)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            Text("\(shelf.bookCount) 本")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func boxRow(_ box: BoxSummary) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "shippingbox.fill")
+                .font(.title2)
+                .foregroundStyle(.brown)
+                .frame(width: 44, height: 44)
+                .background(Color.brown.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(box.name)
+                    .font(.body.weight(.medium))
+                Text(box.boxUid)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Text("\(box.bookCount) 本")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
+    }
+
+    // MARK: - 全部书籍
+
     private var bookListView: some View {
         Group {
-            if isLoading && books.isEmpty {
+            if selectedLibraryId == nil {
+                ContentUnavailableView("请先选择书库", systemImage: "building.columns")
+            } else if isLoading && books.isEmpty {
                 ProgressView("加载中...")
                     .frame(maxHeight: .infinity)
             } else if books.isEmpty {
@@ -75,7 +323,7 @@ struct LibraryView: View {
             }
         }
         .task {
-            if books.isEmpty {
+            if books.isEmpty && selectedLibraryId != nil {
                 await loadBooks()
             }
         }
@@ -85,22 +333,61 @@ struct LibraryView: View {
         }
     }
 
+    // MARK: - 数据加载
+
+    private func loadLibraries() async {
+        isLoadingLibraries = true
+        do {
+            libraries = try await NetworkService.shared.fetchLibraries()
+
+            // 恢复上次选择的书库
+            if selectedLibraryId == nil {
+                if lastLibraryId > 0, libraries.contains(where: { $0.id == lastLibraryId }) {
+                    selectedLibraryId = lastLibraryId
+                } else if let first = libraries.first {
+                    selectedLibraryId = first.id
+                }
+            }
+        } catch {
+            errorMessage = error.chineseDescription
+        }
+        isLoadingLibraries = false
+
+        // 加载选中书库的总览
+        if selectedLibraryId != nil {
+            await loadOverview()
+        }
+    }
+
+    private func loadOverview() async {
+        guard let libraryId = selectedLibraryId else { return }
+        isLoading = true
+        do {
+            overview = try await NetworkService.shared.fetchLibraryOverview(libraryId: libraryId)
+        } catch {
+            errorMessage = error.chineseDescription
+        }
+        isLoading = false
+    }
+
     private func loadBooks() async {
+        guard let libraryId = selectedLibraryId else { return }
         isLoading = true
         do {
             let response = try await NetworkService.shared.fetchBooks(
                 page: currentPage,
-                search: searchText.isEmpty ? nil : searchText
+                search: searchText.isEmpty ? nil : searchText,
+                libraryId: libraryId
             )
             if currentPage == 1 {
-                books = response.items
+                books = response.data
             } else {
-                books.append(contentsOf: response.items)
+                books.append(contentsOf: response.data)
             }
-            totalBooks = response.total
+            totalBooks = response.pagination.total
             hasMore = books.count < totalBooks
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.chineseDescription
         }
         isLoading = false
     }
@@ -112,10 +399,11 @@ struct LibraryView: View {
     }
 }
 
-/// 书库中的书籍详情页（只读 + 编辑）
+/// 书库中的书籍详情页（含位置信息和操作日志）
 struct LibraryBookDetailView: View {
     let book: Book
     @State private var detail: Book?
+    @State private var logs: [BookLog] = []
     @State private var isLoading = true
 
     var body: some View {
@@ -123,7 +411,7 @@ struct LibraryBookDetailView: View {
             if isLoading {
                 ProgressView()
             } else if let detail {
-                Form {
+                List {
                     // 封面
                     if let coverUrl = detail.coverUrl, let url = URL(string: coverUrl) {
                         Section {
@@ -152,6 +440,10 @@ struct LibraryBookDetailView: View {
                         }
                     }
 
+                    Section("位置") {
+                        LabeledContent("位置类型", value: detail.locationDescription)
+                    }
+
                     Section("校验信息") {
                         if let status = detail.verifyStatus {
                             HStack {
@@ -166,20 +458,48 @@ struct LibraryBookDetailView: View {
                     }
 
                     if let ocrText = detail.rawOcrText, !ocrText.isEmpty {
-                        Section("OCR 原始文本") {
+                        Section("原始识别文本") {
                             Text(ocrText)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
+
+                    if !logs.isEmpty {
+                        Section("操作记录") {
+                            ForEach(logs) { log in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack {
+                                        Text(log.actionLabel)
+                                            .font(.subheadline.weight(.medium))
+                                        Spacer()
+                                        Text(log.method)
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                    if let date = log.createdAt {
+                                        Text(date, style: .relative)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                    }
                 }
+                .listStyle(.insetGrouped)
             }
         }
         .navigationTitle(book.title)
         .navigationBarTitleDisplayMode(.inline)
         .task {
             do {
-                detail = try await NetworkService.shared.fetchBook(id: book.id)
+                async let fetchDetail = NetworkService.shared.fetchBook(id: book.id)
+                async let fetchLogs = NetworkService.shared.fetchBookLogs(bookId: book.id)
+                detail = try await fetchDetail
+                let logsResponse = try await fetchLogs
+                logs = logsResponse.data
             } catch {
                 detail = book
             }

@@ -27,6 +27,13 @@ enum VerifyStatus: String, Codable, CaseIterable {
     }
 }
 
+/// 位置类型
+enum LocationType: String, Codable {
+    case shelf
+    case box
+    case none
+}
+
 /// 书籍模型
 struct Book: Identifiable, Codable, Hashable {
     let id: Int
@@ -39,18 +46,19 @@ struct Book: Identifiable, Codable, Hashable {
     var verifyStatus: VerifyStatus?
     var verifySource: String?
     var rawOcrText: String?
+    var locationType: LocationType?
+    var locationId: Int?
+    var libraryId: Int?
     var createdAt: Date?
     var updatedAt: Date?
 
-    enum CodingKeys: String, CodingKey {
-        case id, title, author, isbn, publisher
-        case coverUrl = "cover_url"
-        case categoryId = "category_id"
-        case verifyStatus = "verify_status"
-        case verifySource = "verify_source"
-        case rawOcrText = "raw_ocr_text"
-        case createdAt = "created_at"
-        case updatedAt = "updated_at"
+    /// 位置描述文字
+    var locationDescription: String {
+        switch locationType {
+        case .shelf: "书架"
+        case .box: "箱子"
+        default: "未归位"
+        }
     }
 }
 
@@ -62,22 +70,14 @@ struct VerifyResult: Codable {
     let isbn: String?
     let coverUrl: String?
     let source: String?
-
-    enum CodingKeys: String, CodingKey {
-        case status, title, author, isbn, source
-        case coverUrl = "cover_url"
-    }
 }
 
 /// 批量新增书籍的请求体
 struct BatchBooksRequest: Codable {
     let books: [NewBookRequest]
-    let boxId: Int?
-
-    enum CodingKeys: String, CodingKey {
-        case books
-        case boxId = "box_id"
-    }
+    let locationType: LocationType?
+    let locationId: Int?
+    let libraryId: Int?
 }
 
 /// 新增书籍请求
@@ -91,13 +91,12 @@ struct NewBookRequest: Codable {
     var verifyStatus: VerifyStatus?
     var verifySource: String?
     var rawOcrText: String?
+}
 
-    enum CodingKeys: String, CodingKey {
-        case title, author, isbn, publisher
-        case coverUrl = "cover_url"
-        case categoryId = "category_id"
-        case verifyStatus = "verify_status"
-        case verifySource = "verify_source"
-        case rawOcrText = "raw_ocr_text"
-    }
+/// 移动书籍请求
+struct MoveBookRequest: Codable {
+    let toType: LocationType
+    let toId: Int?
+    let method: String?
+    let rawInput: String?
 }
