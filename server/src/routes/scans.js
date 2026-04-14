@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import prisma from '../utils/prisma.js';
+import { parseOptionalId, parsePagination, paginationResponse } from '../utils/validate.js';
 
 const router = Router();
 
@@ -15,7 +16,7 @@ router.post('/', async (req, res, next) => {
     const record = await prisma.scanRecord.create({
       data: {
         mode,
-        boxId: boxId ? parseInt(boxId, 10) : null,
+        boxId: parseOptionalId(boxId),
         photoPath,
         ocrResult: ocrResult || undefined,
         extractedTitles: extractedTitles || undefined,
@@ -31,10 +32,8 @@ router.post('/', async (req, res, next) => {
 // 获取扫描历史
 router.get('/', async (req, res, next) => {
   try {
-    const { page = 1, pageSize = 20, mode } = req.query;
-
-    const skip = (parseInt(page, 10) - 1) * parseInt(pageSize, 10);
-    const take = parseInt(pageSize, 10);
+    const { mode } = req.query;
+    const { page, pageSize, skip, take } = parsePagination(req.query);
 
     const where = {};
     if (mode) where.mode = mode;
@@ -51,12 +50,7 @@ router.get('/', async (req, res, next) => {
 
     res.json({
       data: records,
-      pagination: {
-        page: parseInt(page, 10),
-        pageSize: take,
-        total,
-        totalPages: Math.ceil(total / take),
-      },
+      pagination: paginationResponse(page, pageSize, total),
     });
   } catch (err) {
     next(err);

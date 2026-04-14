@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import prisma from '../utils/prisma.js';
+import { parseId, parseOptionalId } from '../utils/validate.js';
 
 const router = Router();
 
@@ -46,7 +47,7 @@ router.post('/', async (req, res, next) => {
     const category = await prisma.category.create({
       data: {
         name,
-        parentId: parentId ? parseInt(parentId, 10) : null,
+        parentId: parseOptionalId(parentId),
       },
     });
 
@@ -59,18 +60,18 @@ router.post('/', async (req, res, next) => {
 // 更新分类
 router.put('/:id', async (req, res, next) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseId(req.params.id, '分类 ID');
     const { name, parentId } = req.body;
 
     // 防止将分类设为自己的子分类
-    if (parentId && parseInt(parentId, 10) === id) {
+    const parsedParentId = parseOptionalId(parentId);
+    if (parsedParentId && parsedParentId === id) {
       return res.status(400).json({ error: '分类不能设为自己的子分类' });
     }
 
     const data = {};
     if (name !== undefined) data.name = name;
-    if (parentId !== undefined)
-      data.parentId = parentId ? parseInt(parentId, 10) : null;
+    if (parentId !== undefined) data.parentId = parsedParentId;
 
     const category = await prisma.category.update({
       where: { id },
@@ -79,6 +80,7 @@ router.put('/:id', async (req, res, next) => {
 
     res.json(category);
   } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     if (err.code === 'P2025') {
       return res.status(404).json({ error: '分类不存在' });
     }
@@ -89,7 +91,7 @@ router.put('/:id', async (req, res, next) => {
 // 删除分类（子分类的 parentId 会被设为 null，书籍的 categoryId 也会被设为 null）
 router.delete('/:id', async (req, res, next) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseId(req.params.id, '分类 ID');
 
     await prisma.$transaction([
       // 子分类解除关联
@@ -108,6 +110,7 @@ router.delete('/:id', async (req, res, next) => {
 
     res.json({ message: '分类已删除' });
   } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     if (err.code === 'P2025') {
       return res.status(404).json({ error: '分类不存在' });
     }
