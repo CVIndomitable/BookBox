@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// 扫描结果列表 — 展示三色标识，支持编辑和批量入箱
+/// 扫描结果列表 — 展示三色标识，支持编辑和批量入库
 struct ScanResultView: View {
     @Binding var results: [ScanResultItem]
-    let box: Box?
+    let locationType: LocationType
+    let locationId: Int?
     @State private var editingItem: ScanResultItem?
     @State private var isSaving = false
     @State private var showSaveSuccess = false
@@ -44,7 +45,7 @@ struct ScanResultView: View {
                 results.removeAll()
             }
         } message: {
-            Text("已将 \(selectedCount) 本书录入箱子")
+            Text("已将 \(selectedCount) 本书录入\(locationType == .shelf ? "书架" : "箱子")")
         }
         .alert("保存失败", isPresented: .init(
             get: { errorMessage != nil },
@@ -77,17 +78,22 @@ struct ScanResultView: View {
                     .frame(width: 12, height: 12)
             }
 
-            // 书名和来源
+            // 书名和作者
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.finalTitle)
                     .font(.body)
                     .lineLimit(2)
 
                 HStack(spacing: 8) {
-                    if let author = item.verifyResult?.author {
+                    if let author = item.finalAuthor {
                         Text(author)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+                    if let confidence = item.confidence {
+                        Text(confidenceLabel(confidence))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
                     }
                     if let source = item.verifyResult?.source {
                         Text("via \(source)")
@@ -161,7 +167,7 @@ struct ScanResultView: View {
                         ProgressView()
                             .tint(.white)
                     }
-                    Text("入箱 (\(selectedCount))")
+                    Text("入库 (\(selectedCount))")
                 }
                 .font(.headline)
                 .padding(.horizontal, 24)
@@ -184,8 +190,15 @@ struct ScanResultView: View {
         }
     }
 
+    private func confidenceLabel(_ confidence: ConfidenceLevel) -> String {
+        confidence.label
+    }
+
     private func saveSelectedBooks() {
-        guard let box else { return }
+        guard locationId != nil else {
+            errorMessage = "请先选择\(locationType == .shelf ? "书架" : "箱子")"
+            return
+        }
         isSaving = true
 
         Task {
@@ -195,21 +208,26 @@ struct ScanResultView: View {
                     .map { item in
                         NewBookRequest(
                             title: item.finalTitle,
-                            author: item.verifyResult?.author,
+                            author: item.finalAuthor,
                             isbn: item.verifyResult?.isbn,
                             publisher: nil,
                             coverUrl: item.verifyResult?.coverUrl,
                             categoryId: nil,
-                            verifyStatus: item.verifyResult?.status ?? .notFound,
-                            verifySource: item.verifyResult?.source,
-                            rawOcrText: item.extractedTitle.title
+                            verifyStatus: item.verifyResult?.status ?? item.status,
+                            verifySource: item.verifyResult?.source ?? (item.confidence != nil ? "mimo" : nil),
+                            rawOcrText: item.rawOcrText ?? item.title
                         )
                     }
-                let batch = BatchBooksRequest(books: books, boxId: box.id)
+                let batch = BatchBooksRequest(
+                    books: books,
+                    locationType: locationType,
+                    locationId: locationId,
+                    libraryId: nil
+                )
                 _ = try await NetworkService.shared.createBooks(batch: batch)
                 showSaveSuccess = true
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = error.chineseDescription
             }
             isSaving = false
         }
