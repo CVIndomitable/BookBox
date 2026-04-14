@@ -24,7 +24,7 @@ router.get('/', async (req, res, next) => {
       where,
       orderBy: { createdAt: 'desc' },
     });
-    res.json({ data: shelves });
+    res.json(shelves);
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     next(err);

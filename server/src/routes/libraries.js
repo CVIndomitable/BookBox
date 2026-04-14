@@ -19,7 +19,7 @@ router.get('/', async (req, res, next) => {
       })
     );
 
-    res.json({ data: result });
+    res.json(result);
   } catch (err) {
     next(err);
   }
