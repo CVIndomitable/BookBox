@@ -23,6 +23,9 @@ struct LibraryView: View {
     @State private var editLocation = ""
     @State private var editDescription = ""
     @State private var isSaving = false
+    @State private var showLogs = false
+    @State private var showCategories = false
+    @State private var showScanHistory = false
 
     enum ViewMode: String, CaseIterable {
         case overview = "总览"
@@ -57,6 +60,26 @@ struct LibraryView: View {
                 }
             }
             .navigationTitle("书库")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button { showLogs = true } label: {
+                            Label("操作日志", systemImage: "clock.arrow.circlepath")
+                        }
+                        Button { showCategories = true } label: {
+                            Label("分类管理", systemImage: "tag")
+                        }
+                        Button { showScanHistory = true } label: {
+                            Label("扫描历史", systemImage: "doc.text.magnifyingglass")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
+            }
+            .navigationDestination(isPresented: $showLogs) { LogsView() }
+            .navigationDestination(isPresented: $showCategories) { CategoryManageView() }
+            .navigationDestination(isPresented: $showScanHistory) { ScanHistoryView() }
             .searchable(text: $searchText, prompt: "搜索书名或作者")
             .onChange(of: searchText) { _, _ in
                 if viewMode == .books {
@@ -367,6 +390,9 @@ struct LibraryView: View {
                             BookRow(book: book)
                         }
                     }
+                    .onDelete { offsets in
+                        deleteBooks(at: offsets)
+                    }
 
                     if hasMore {
                         ProgressView()
@@ -458,6 +484,22 @@ struct LibraryView: View {
         await loadBooks()
     }
 
+    // MARK: - 书籍删除
+
+    private func deleteBooks(at offsets: IndexSet) {
+        let booksToDelete = offsets.map { books[$0] }
+        books.remove(atOffsets: offsets)
+        for book in booksToDelete {
+            Task {
+                do {
+                    _ = try await NetworkService.shared.deleteBook(id: book.id)
+                } catch {
+                    errorMessage = error.chineseDescription
+                }
+            }
+        }
+    }
+
     // MARK: - 书库编辑 / 删除
 
     private func updateLibrary() {
@@ -500,12 +542,24 @@ struct LibraryView: View {
     }
 }
 
-/// 书库中的书籍详情页（含位置信息和操作日志）
+/// 书库中的书籍详情页（含位置信息、操作日志、编辑/删除/移动）
 struct LibraryBookDetailView: View {
     let book: Book
+    @Environment(\.dismiss) private var dismiss
     @State private var detail: Book?
     @State private var logs: [BookLog] = []
     @State private var isLoading = true
+    @State private var showEdit = false
+    @State private var showMove = false
+    @State private var showDeleteConfirm = false
+    @State private var errorMessage: String?
+
+    // 编辑状态
+    @State private var editTitle = ""
+    @State private var editAuthor = ""
+    @State private var editIsbn = ""
+    @State private var editPublisher = ""
+    @State private var isSaving = false
 
     var body: some View {
         Group {
@@ -542,7 +596,12 @@ struct LibraryBookDetailView: View {
                     }
 
                     Section("位置") {
-                        LabeledContent("位置类型", value: detail.locationDescription)
+                        LabeledContent("当前位置", value: detail.locationDescription)
+                        Button {
+                            showMove = true
+                        } label: {
+                            Label("移动到...", systemImage: "arrow.right.circle")
+                        }
                     }
 
                     Section("校验信息") {
@@ -588,12 +647,38 @@ struct LibraryBookDetailView: View {
                             }
                         }
                     }
+
+                    // 删除按钮
+                    Section {
+                        Button(role: .destructive) {
+                            showDeleteConfirm = true
+                        } label: {
+                            HStack {
+                                Spacer()
+                                Label("删除书籍", systemImage: "trash")
+                                Spacer()
+                            }
+                        }
+                    }
                 }
                 .listStyle(.insetGrouped)
             }
         }
         .navigationTitle(book.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    editTitle = detail?.title ?? book.title
+                    editAuthor = detail?.author ?? book.author ?? ""
+                    editIsbn = detail?.isbn ?? book.isbn ?? ""
+                    editPublisher = detail?.publisher ?? book.publisher ?? ""
+                    showEdit = true
+                } label: {
+                    Text("编辑")
+                }
+            }
+        }
         .task {
             do {
                 async let fetchDetail = NetworkService.shared.fetchBook(id: book.id)
@@ -605,6 +690,85 @@ struct LibraryBookDetailView: View {
                 detail = book
             }
             isLoading = false
+        }
+        .sheet(isPresented: $showEdit) {
+            NavigationStack {
+                Form {
+                    Section("书籍信息") {
+                        TextField("书名", text: $editTitle)
+                        TextField("作者", text: $editAuthor)
+                        TextField("ISBN", text: $editIsbn)
+                        TextField("出版社", text: $editPublisher)
+                    }
+                }
+                .navigationTitle("编辑书籍")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("取消") { showEdit = false }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("保存") { updateBook() }
+                            .disabled(editTitle.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showMove) {
+            MoveBookSheet(bookId: book.id) {
+                Task {
+                    detail = try? await NetworkService.shared.fetchBook(id: book.id)
+                }
+            }
+        }
+        .alert("确认删除", isPresented: $showDeleteConfirm) {
+            Button("取消", role: .cancel) {}
+            Button("删除", role: .destructive) { deleteBook() }
+        } message: {
+            Text("确定要删除「\(detail?.title ?? book.title)」吗？此操作不可撤销。")
+        }
+        .alert("操作失败", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("确定") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+        }
+    }
+
+    private func updateBook() {
+        isSaving = true
+        Task {
+            do {
+                let request = NewBookRequest(
+                    title: editTitle.trimmingCharacters(in: .whitespaces),
+                    author: editAuthor.isEmpty ? nil : editAuthor,
+                    isbn: editIsbn.isEmpty ? nil : editIsbn,
+                    publisher: editPublisher.isEmpty ? nil : editPublisher,
+                    coverUrl: detail?.coverUrl,
+                    categoryId: detail?.categoryId,
+                    verifyStatus: detail?.verifyStatus,
+                    verifySource: detail?.verifySource,
+                    rawOcrText: detail?.rawOcrText
+                )
+                detail = try await NetworkService.shared.updateBook(id: book.id, request)
+                showEdit = false
+            } catch {
+                errorMessage = error.chineseDescription
+            }
+            isSaving = false
+        }
+    }
+
+    private func deleteBook() {
+        Task {
+            do {
+                _ = try await NetworkService.shared.deleteBook(id: book.id)
+                dismiss()
+            } catch {
+                errorMessage = error.chineseDescription
+            }
         }
     }
 }

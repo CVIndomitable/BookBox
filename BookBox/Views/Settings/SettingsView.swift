@@ -14,6 +14,9 @@ struct SettingsView: View {
     @State private var showSaveSuccess = false
     @State private var showAdvanced = false
     @State private var errorMessage: String?
+    @State private var cacheStats: CacheStats?
+    @State private var isLoadingCache = false
+    @State private var isResettingCache = false
 
     var body: some View {
         NavigationStack {
@@ -100,6 +103,42 @@ struct SettingsView: View {
                     Text("开启后在主界面显示悬浮麦克风按钮，可通过语音管理书库。关闭后仍可通过 Siri 使用语音指令。")
                 }
 
+                // LLM 缓存统计
+                Section {
+                    DisclosureGroup("语音缓存统计") {
+                        if let stats = cacheStats {
+                            LabeledContent("命中次数", value: "\(stats.hits)")
+                            LabeledContent("未命中次数", value: "\(stats.misses)")
+                            LabeledContent("命中率", value: stats.hitRate)
+                            LabeledContent("缓存条目", value: "\(stats.activeEntries)/\(stats.maxSize)")
+                            LabeledContent("过期时间", value: "\(stats.ttlMinutes) 分钟")
+
+                            Button(role: .destructive) {
+                                resetCacheStats()
+                            } label: {
+                                HStack {
+                                    Spacer()
+                                    if isResettingCache {
+                                        ProgressView()
+                                    } else {
+                                        Text("重置统计")
+                                    }
+                                    Spacer()
+                                }
+                            }
+                            .disabled(isResettingCache)
+                        } else if isLoadingCache {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            Text("暂无缓存数据")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("AI 性能")
+                }
+
                 Section("关于") {
                     LabeledContent("版本", value: "2.0.0")
                 }
@@ -107,6 +146,7 @@ struct SettingsView: View {
             .navigationTitle("设置")
             .task {
                 await loadRemoteSettings()
+                await loadCacheStats()
             }
             .alert("已保存", isPresented: $showSaveSuccess) {
                 Button("确定") {}
@@ -134,6 +174,29 @@ struct SettingsView: View {
             // 远程设置加载失败不阻塞使用
         }
         isLoading = false
+    }
+
+    private func loadCacheStats() async {
+        isLoadingCache = true
+        do {
+            cacheStats = try await NetworkService.shared.fetchCacheStats()
+        } catch {
+            // 缓存统计加载失败不阻塞
+        }
+        isLoadingCache = false
+    }
+
+    private func resetCacheStats() {
+        isResettingCache = true
+        Task {
+            do {
+                _ = try await NetworkService.shared.resetCacheStats()
+                cacheStats = try await NetworkService.shared.fetchCacheStats()
+            } catch {
+                errorMessage = error.chineseDescription
+            }
+            isResettingCache = false
+        }
     }
 
     private func saveSettings() {

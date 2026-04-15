@@ -374,6 +374,15 @@ final class NetworkService: ObservableObject {
         return try await request("POST", path: "/categories", body: CreateRequest(name: name, parentId: parentId))
     }
 
+    func updateCategory(id: Int, name: String? = nil, parentId: Int? = nil) async throws -> Category {
+        struct Req: Codable { let name: String?; let parentId: Int? }
+        return try await request("PUT", path: "/categories/\(id)", body: Req(name: name, parentId: parentId))
+    }
+
+    func deleteCategory(id: Int) async throws -> EmptyResponse {
+        try await request("DELETE", path: "/categories/\(id)")
+    }
+
     // MARK: - 设置 API
 
     func fetchSettings() async throws -> UserSettings {
@@ -399,6 +408,32 @@ final class NetworkService: ObservableObject {
     func processVoiceCommand(text: String, systemPrompt: String) async throws -> VoiceCommandResult {
         struct Req: Codable { let text: String; let systemPrompt: String }
         return try await request("POST", path: "/llm/voice-command", body: Req(text: text, systemPrompt: systemPrompt), timeout: 60)
+    }
+
+    // MARK: - LLM 缓存统计
+
+    func fetchCacheStats() async throws -> CacheStats {
+        try await request("GET", path: "/llm/cache-stats")
+    }
+
+    func resetCacheStats() async throws -> EmptyResponse {
+        try await request("POST", path: "/llm/cache-stats/reset")
+    }
+
+    // MARK: - 扫描记录 API
+
+    func saveScanRecord(mode: ScanMode, boxId: Int? = nil, extractedTitles: [String]? = nil) async throws -> ScanRecord {
+        struct Req: Codable { let mode: ScanMode; let boxId: Int?; let extractedTitles: [String]? }
+        return try await request("POST", path: "/scans", body: Req(mode: mode, boxId: boxId, extractedTitles: extractedTitles))
+    }
+
+    func fetchScanRecords(page: Int = 1, pageSize: Int = 20, mode: ScanMode? = nil) async throws -> PaginatedResponse<ScanRecord> {
+        var queryItems = [
+            URLQueryItem(name: "page", value: "\(page)"),
+            URLQueryItem(name: "pageSize", value: "\(pageSize)")
+        ]
+        if let mode { queryItems.append(URLQueryItem(name: "mode", value: mode.rawValue)) }
+        return try await request("GET", path: "/scans", queryItems: queryItems)
     }
 }
 

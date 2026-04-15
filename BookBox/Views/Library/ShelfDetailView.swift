@@ -1,15 +1,17 @@
 import SwiftUI
 
-/// 箱子详情 — 展示箱内所有书籍，支持编辑/删除箱子、移除书籍
-struct BoxDetailView: View {
-    let box: Box
+/// 书架详情 — 展示书架上的所有书籍，支持编辑/删除书架、移除书籍
+struct ShelfDetailView: View {
+    let shelfId: Int
+    let shelfName: String
     @Environment(\.dismiss) private var dismiss
-    @State private var detail: Box?
+    @State private var shelf: Shelf?
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var showEdit = false
     @State private var showDeleteConfirm = false
     @State private var editName = ""
+    @State private var editLocation = ""
     @State private var editDescription = ""
     @State private var isSaving = false
 
@@ -18,19 +20,22 @@ struct BoxDetailView: View {
             if isLoading {
                 ProgressView("加载中...")
                     .frame(maxHeight: .infinity)
-            } else if let detail {
+            } else if let shelf {
                 List {
                     Section {
-                        LabeledContent("编号", value: detail.boxUid)
-                        LabeledContent("书籍数量", value: "\(detail.bookCount) 本")
-                        if let desc = detail.description, !desc.isEmpty {
+                        LabeledContent("名称", value: shelf.name)
+                        if let location = shelf.location, !location.isEmpty {
+                            LabeledContent("位置", value: location)
+                        }
+                        LabeledContent("书籍数量", value: "\(shelf.bookCount) 本")
+                        if let desc = shelf.description, !desc.isEmpty {
                             LabeledContent("备注", value: desc)
                         }
                     } header: {
-                        Text("箱子信息")
+                        Text("书架信息")
                     }
 
-                    if let books = detail.books, !books.isEmpty {
+                    if let books = shelf.books, !books.isEmpty {
                         Section {
                             ForEach(books) { book in
                                 NavigationLink(value: book) {
@@ -41,11 +46,11 @@ struct BoxDetailView: View {
                                 removeBooks(at: offsets, from: books)
                             }
                         } header: {
-                            Text("箱内书籍")
+                            Text("书架上的书")
                         }
                     } else {
                         Section {
-                            ContentUnavailableView("箱内暂无书籍", systemImage: "book.closed")
+                            ContentUnavailableView("书架上暂无书籍", systemImage: "book.closed")
                         }
                     }
                 }
@@ -55,14 +60,15 @@ struct BoxDetailView: View {
                 }
             }
         }
-        .navigationTitle(detail?.name ?? box.name)
+        .navigationTitle(shelf?.name ?? shelfName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button {
-                        editName = detail?.name ?? box.name
-                        editDescription = detail?.description ?? box.description ?? ""
+                        editName = shelf?.name ?? shelfName
+                        editLocation = shelf?.location ?? ""
+                        editDescription = shelf?.description ?? ""
                         showEdit = true
                     } label: {
                         Label("编辑", systemImage: "pencil")
@@ -70,7 +76,7 @@ struct BoxDetailView: View {
                     Button(role: .destructive) {
                         showDeleteConfirm = true
                     } label: {
-                        Label("删除箱子", systemImage: "trash")
+                        Label("删除书架", systemImage: "trash")
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
@@ -82,20 +88,21 @@ struct BoxDetailView: View {
         .sheet(isPresented: $showEdit) {
             NavigationStack {
                 Form {
-                    Section("箱子信息") {
-                        TextField("箱子名称", text: $editName)
+                    Section("书架信息") {
+                        TextField("书架名称", text: $editName)
+                        TextField("位置（可选）", text: $editLocation)
                         TextField("备注（可选）", text: $editDescription, axis: .vertical)
                             .lineLimit(3...6)
                     }
                 }
-                .navigationTitle("编辑箱子")
+                .navigationTitle("编辑书架")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("取消") { showEdit = false }
                     }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("保存") { updateBox() }
+                        Button("保存") { updateShelf() }
                             .disabled(editName.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
                     }
                 }
@@ -103,9 +110,9 @@ struct BoxDetailView: View {
         }
         .alert("确认删除", isPresented: $showDeleteConfirm) {
             Button("取消", role: .cancel) {}
-            Button("删除", role: .destructive) { deleteBox() }
+            Button("删除", role: .destructive) { deleteShelf() }
         } message: {
-            Text("删除箱子后，箱内书籍不会被删除，但会变为未归位状态。")
+            Text("删除书架后，书架上的书籍不会被删除，但会变为未归位状态。")
         }
         .alert("操作失败", isPresented: Binding(
             get: { errorMessage != nil },
@@ -120,28 +127,27 @@ struct BoxDetailView: View {
     private func loadDetail() async {
         isLoading = true
         do {
-            detail = try await NetworkService.shared.fetchBox(id: box.id)
+            shelf = try await NetworkService.shared.fetchShelf(id: shelfId)
         } catch {
             errorMessage = error.chineseDescription
-            detail = box
         }
         isLoading = false
     }
 
-    private func updateBox() {
+    private func updateShelf() {
         isSaving = true
         Task {
             do {
-                let updated = try await NetworkService.shared.updateBox(
-                    id: box.id,
-                    BoxRequest(
+                let updated = try await NetworkService.shared.updateShelf(
+                    id: shelfId,
+                    ShelfRequest(
                         name: editName.trimmingCharacters(in: .whitespaces),
+                        location: editLocation.isEmpty ? nil : editLocation,
                         description: editDescription.isEmpty ? nil : editDescription,
-                        libraryId: detail?.libraryId
+                        libraryId: shelf?.libraryId
                     )
                 )
-                detail?.name = updated.name
-                detail?.description = updated.description
+                shelf = updated
                 showEdit = false
             } catch {
                 errorMessage = error.chineseDescription
@@ -150,10 +156,10 @@ struct BoxDetailView: View {
         }
     }
 
-    private func deleteBox() {
+    private func deleteShelf() {
         Task {
             do {
-                _ = try await NetworkService.shared.deleteBox(id: box.id)
+                _ = try await NetworkService.shared.deleteShelf(id: shelfId)
                 dismiss()
             } catch {
                 errorMessage = error.chineseDescription
@@ -166,7 +172,7 @@ struct BoxDetailView: View {
         for book in booksToRemove {
             Task {
                 do {
-                    _ = try await NetworkService.shared.removeBookFromBox(boxId: box.id, bookId: book.id)
+                    _ = try await NetworkService.shared.removeBookFromShelf(shelfId: shelfId, bookId: book.id)
                     await loadDetail()
                 } catch {
                     errorMessage = error.chineseDescription

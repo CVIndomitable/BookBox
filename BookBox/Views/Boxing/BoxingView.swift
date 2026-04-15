@@ -13,6 +13,7 @@ struct BoxingView: View {
     @State private var isProcessing = false
     @State private var isLoadingBoxes = true
     @State private var errorMessage: String?
+    @State private var showPreClassifyImport = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,7 +30,8 @@ struct BoxingView: View {
             } else {
                 ScanResultView(
                     results: $scanResults,
-                    box: selectedBox
+                    locationType: .box,
+                    locationId: selectedBox?.id
                 )
             }
         }
@@ -47,6 +49,9 @@ struct BoxingView: View {
                     }
                     Button("从相册选取", systemImage: "photo") {
                         showPhotoPicker = true
+                    }
+                    Button("从预分类导入", systemImage: "list.clipboard") {
+                        showPreClassifyImport = true
                     }
                 } label: {
                     Image(systemName: "plus.circle.fill")
@@ -70,6 +75,19 @@ struct BoxingView: View {
         .sheet(isPresented: $showPhotoPicker) {
             PhotoPickerView(selectedImage: $capturedImage)
                 .ignoresSafeArea()
+        }
+        .sheet(isPresented: $showPreClassifyImport) {
+            PreClassifyImportView { importedBooks in
+                for book in importedBooks {
+                    let item = ScanResultItem(
+                        title: book.title,
+                        author: book.author,
+                        confidence: book.confidence,
+                        isVerifying: false
+                    )
+                    scanResults.append(item)
+                }
+            }
         }
         .onChange(of: capturedImage) { _, newImage in
             if let image = newImage {
@@ -141,13 +159,13 @@ struct BoxingView: View {
     private var emptyStateView: some View {
         ContentUnavailableView {
             Label(
-                selectedBox == nil ? "请先选择箱子" : "拍摄书脊",
+                selectedBox == nil ? "请先选择箱子" : "拍摄书籍",
                 systemImage: selectedBox == nil ? "shippingbox" : "camera.viewfinder"
             )
         } description: {
             Text(selectedBox == nil
                  ? "选择一个箱子或新建箱子后开始装箱"
-                 : "拍照识别书名后自动联网校验")
+                 : "拍照后 AI 自动识别书名")
         } actions: {
             if selectedBox == nil {
                 Button("新建箱子") {
@@ -167,7 +185,7 @@ struct BoxingView: View {
         VStack(spacing: 16) {
             ProgressView()
                 .scaleEffect(1.5)
-            Text("正在识别并校验...")
+            Text("AI 正在识别书籍...")
                 .foregroundStyle(.secondary)
         }
         .frame(maxHeight: .infinity)
@@ -178,7 +196,7 @@ struct BoxingView: View {
         do {
             boxes = try await NetworkService.shared.fetchBoxes()
         } catch {
-            errorMessage = "加载箱子列表失败: \(error.localizedDescription)"
+            errorMessage = "加载箱子列表失败: \(error.chineseDescription)"
         }
         isLoadingBoxes = false
     }
@@ -188,65 +206,256 @@ struct BoxingView: View {
         isProcessing = true
 
         Task {
+            defer {
+                isProcessing = false
+                capturedImage = nil
+            }
             do {
-                // 1. OCR 识别
-                let blocks = try await OCRService.shared.recognizeText(from: image)
-                // 2. 提取书名
-                let titles = BookExtractor.shared.extractTitles(from: blocks)
-                // 3. 联网校验每个书名
-                let region = (try? await NetworkService.shared.fetchSettings().regionMode) ?? .mainland
-                for title in titles {
-                    let item = ScanResultItem(
-                        extractedTitle: title,
-                        verifyResult: nil,
-                        isVerifying: true
-                    )
-                    scanResults.append(item)
-                    let index = scanResults.count - 1
-
-                    // 异步校验
+                guard let compressed = compressImageForRecognition(image) else {
+                    errorMessage = "图片压缩失败，请重试"
+                    return
+                }
+                let recognized = try await NetworkService.shared.recognizeBooks(imageData: compressed)
+                if recognized.isEmpty {
+                    errorMessage = "未识别到书籍，请调整角度或距离后重试"
+                } else {
+                    for book in recognized {
+                        let item = ScanResultItem(
+                            title: book.title,
+                            author: book.author,
+                            confidence: book.confidence,
+                            isVerifying: false
+                        )
+                        scanResults.append(item)
+                    }
+                    // 保存扫描记录
                     Task {
-                        do {
-                            let result = try await NetworkService.shared.verifyBook(
-                                title: title.title,
-                                region: region
-                            )
-                            if index < scanResults.count {
-                                scanResults[index].verifyResult = result
-                                scanResults[index].isVerifying = false
-                            }
-                        } catch {
-                            if index < scanResults.count {
-                                scanResults[index].isVerifying = false
-                            }
-                        }
+                        try? await NetworkService.shared.saveScanRecord(
+                            mode: .boxing,
+                            boxId: selectedBox?.id,
+                            extractedTitles: recognized.map(\.title)
+                        )
                     }
                 }
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = "AI 识别失败: \(error.chineseDescription)"
             }
-            isProcessing = false
-            capturedImage = nil
         }
     }
 }
 
-/// 扫描结果条目 — 包含提取的书名和校验结果
+/// 扫描结果条目
 struct ScanResultItem: Identifiable {
     let id = UUID()
-    let extractedTitle: ExtractedTitle
+    var title: String
+    var author: String?
+    var confidence: ConfidenceLevel?
     var verifyResult: VerifyResult?
     var isVerifying: Bool
     var isSelected = true
+    var rawOcrText: String?
 
-    /// 最终使用的书名（校验结果优先）
+    /// 最终使用的书名
     var finalTitle: String {
-        verifyResult?.title ?? extractedTitle.title
+        verifyResult?.title ?? title
     }
 
-    /// 校验状态
+    /// 最终作者
+    var finalAuthor: String? {
+        verifyResult?.author ?? author
+    }
+
+    /// 校验状态（MiMo 置信度 → 三色）
     var status: VerifyStatus {
-        verifyResult?.status ?? .notFound
+        if let result = verifyResult {
+            return result.status
+        }
+        switch confidence {
+        case .high: return .matched
+        case .medium: return .uncertain
+        default: return .notFound
+        }
+    }
+}
+
+// MARK: - 从预分类导入
+
+/// 从预分类列表中选择书籍导入到装箱模式
+struct PreClassifyImportView: View {
+    @Environment(\.dismiss) private var dismiss
+    let onImport: ([RecognizedBook]) -> Void
+
+    @State private var sessions: [PreClassifySession] = []
+    @State private var selectedSession: PreClassifySession?
+    @State private var selectedBookIds: Set<UUID> = []
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let session = selectedSession {
+                    bookSelectionList(session)
+                } else {
+                    sessionList
+                }
+            }
+            .navigationTitle(selectedSession != nil ? "选择书籍" : "选择预分类列表")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if selectedSession != nil {
+                        Button("返回") {
+                            selectedSession = nil
+                            selectedBookIds = []
+                        }
+                    } else {
+                        Button("取消") { dismiss() }
+                    }
+                }
+                if selectedSession != nil {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("导入 (\(selectedBookIds.count))") {
+                            importSelected()
+                        }
+                        .disabled(selectedBookIds.isEmpty)
+                    }
+                }
+            }
+            .onAppear { loadSessions() }
+        }
+    }
+
+    // MARK: - 列表选择
+
+    private var sessionList: some View {
+        List {
+            if sessions.isEmpty {
+                ContentUnavailableView("暂无预分类列表", systemImage: "list.clipboard")
+            } else {
+                ForEach(sessions) { session in
+                    Button {
+                        selectedSession = session
+                        selectedBookIds = Set(session.books.map(\.id))
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(session.name)
+                                    .font(.body)
+                                    .foregroundStyle(.primary)
+                                Text("\(session.books.count) 本书 · \(session.updatedAt.formatted(.dateTime.month().day().hour().minute()))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - 书籍选择
+
+    private func bookSelectionList(_ session: PreClassifySession) -> some View {
+        VStack(spacing: 0) {
+            List {
+                Section {
+                    ForEach(session.books) { book in
+                        Button {
+                            toggleBook(book.id)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: selectedBookIds.contains(book.id) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(selectedBookIds.contains(book.id) ? Color.accentColor : .secondary)
+
+                                Circle()
+                                    .fill(confidenceColor(book.confidence))
+                                    .frame(width: 10, height: 10)
+
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(book.title)
+                                        .font(.body)
+                                        .foregroundStyle(.primary)
+                                    HStack(spacing: 8) {
+                                        if let author = book.author {
+                                            Text(author)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        if let category = book.category {
+                                            Text(category)
+                                                .font(.caption2)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(Color.accentColor.opacity(0.12))
+                                                .foregroundStyle(Color.accentColor)
+                                                .clipShape(Capsule())
+                                        }
+                                    }
+                                }
+                                Spacer()
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } header: {
+                    Text("\(session.name) · \(session.books.count) 本")
+                }
+            }
+            .listStyle(.insetGrouped)
+
+            // 底部全选栏
+            HStack {
+                Button {
+                    if selectedBookIds.count == session.books.count {
+                        selectedBookIds.removeAll()
+                    } else {
+                        selectedBookIds = Set(session.books.map(\.id))
+                    }
+                } label: {
+                    Text(selectedBookIds.count == session.books.count ? "取消全选" : "全选")
+                        .font(.subheadline)
+                }
+                Spacer()
+            }
+            .padding()
+            .background(.ultraThinMaterial)
+        }
+    }
+
+    // MARK: - 辅助方法
+
+    private func toggleBook(_ id: UUID) {
+        if selectedBookIds.contains(id) {
+            selectedBookIds.remove(id)
+        } else {
+            selectedBookIds.insert(id)
+        }
+    }
+
+    private func confidenceColor(_ confidence: ConfidenceLevel) -> Color {
+        switch confidence {
+        case .high: .green
+        case .medium: .orange
+        case .low: .red
+        }
+    }
+
+    private func loadSessions() {
+        let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("preClassifySessions.json")
+        guard let data = try? Data(contentsOf: url),
+              let decoded = try? JSONDecoder().decode([PreClassifySession].self, from: data) else { return }
+        sessions = decoded
+    }
+
+    private func importSelected() {
+        guard let session = selectedSession else { return }
+        let books = session.books.filter { selectedBookIds.contains($0.id) }
+        onImport(books)
+        dismiss()
     }
 }
 
