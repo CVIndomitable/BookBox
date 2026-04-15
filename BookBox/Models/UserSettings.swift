@@ -14,23 +14,16 @@ struct UserSettings: Codable {
     var llmEndpoint: String?
     var llmModel: String?
     var llmSupportsSearch: Bool
-
-    enum CodingKeys: String, CodingKey {
-        case regionMode = "region_mode"
-        case llmProvider = "llm_provider"
-        case llmApiKey = "llm_api_key"
-        case llmEndpoint = "llm_endpoint"
-        case llmModel = "llm_model"
-        case llmSupportsSearch = "llm_supports_search"
-    }
+    var hasLlmApiKey: Bool?
 
     /// 默认设置
     static let defaultSettings = UserSettings(
         regionMode: .mainland,
-        llmProvider: nil,
+        llmProvider: "mimo",
         llmApiKey: nil,
         llmEndpoint: nil,
         llmModel: nil,
-        llmSupportsSearch: false
+        llmSupportsSearch: false,
+        hasLlmApiKey: false
     )
 }

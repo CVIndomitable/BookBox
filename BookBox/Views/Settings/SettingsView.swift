@@ -17,6 +17,9 @@ struct SettingsView: View {
     @State private var cacheStats: CacheStats?
     @State private var isLoadingCache = false
     @State private var isResettingCache = false
+    @State private var isCheckingHealth = false
+    @State private var healthResult: HealthCheckResult?
+    @State private var healthError: String?
 
     var body: some View {
         NavigationStack {
@@ -28,6 +31,39 @@ struct SettingsView: View {
                     Text("服务器")
                 } footer: {
                     Text("服务器地址已内置，无需手动配置")
+                }
+
+                Section {
+                    Button {
+                        checkHealth()
+                    } label: {
+                        HStack {
+                            Spacer()
+                            if isCheckingHealth {
+                                ProgressView()
+                                    .padding(.trailing, 4)
+                                Text("检测中...")
+                            } else {
+                                Text("测试连接")
+                            }
+                            Spacer()
+                        }
+                    }
+                    .disabled(isCheckingHealth)
+
+                    if let result = healthResult {
+                        healthStatusRow("服务器", status: result.server)
+                        healthStatusRow("数据库", status: result.database)
+                        healthStatusRow("AI 服务", status: result.ai)
+                    }
+
+                    if let error = healthError {
+                        Label(error, systemImage: "xmark.circle.fill")
+                            .foregroundStyle(.red)
+                            .font(.caption)
+                    }
+                } header: {
+                    Text("连接测试")
                 }
 
                 Section {
@@ -196,6 +232,38 @@ struct SettingsView: View {
                 errorMessage = error.chineseDescription
             }
             isResettingCache = false
+        }
+    }
+
+    @ViewBuilder
+    private func healthStatusRow(_ title: String, status: ServiceStatus) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Image(systemName: status.status == "ok" ? "checkmark.circle.fill" :
+                  status.status == "not_configured" ? "exclamationmark.triangle.fill" :
+                  "xmark.circle.fill")
+                .foregroundStyle(status.status == "ok" ? .green :
+                               status.status == "not_configured" ? .orange : .red)
+            Text(status.status == "ok" ? "正常" :
+                 status.message ?? "异常")
+                .foregroundStyle(.secondary)
+                .font(.caption)
+        }
+    }
+
+    private func checkHealth() {
+        isCheckingHealth = true
+        healthResult = nil
+        healthError = nil
+
+        Task {
+            do {
+                healthResult = try await NetworkService.shared.checkHealth()
+            } catch {
+                healthError = "无法连接到服务器"
+            }
+            isCheckingHealth = false
         }
     }
 

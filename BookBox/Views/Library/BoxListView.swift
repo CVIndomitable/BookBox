@@ -31,6 +31,14 @@ struct BoxListView: View {
         .refreshable {
             await loadBoxes()
         }
+        .alert("加载失败", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("确定") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+        }
     }
 
     private func boxRow(_ box: Box) -> some View {
@@ -64,7 +72,7 @@ struct BoxListView: View {
         do {
             boxes = try await NetworkService.shared.fetchBoxes()
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = error.chineseDescription
         }
         isLoading = false
     }

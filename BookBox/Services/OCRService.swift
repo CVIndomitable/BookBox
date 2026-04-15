@@ -77,8 +77,8 @@ enum OCRError: LocalizedError {
         switch self {
         case .invalidImage:
             return "图片无效，无法进行文字识别"
-        case .recognitionFailed(let error):
-            return "文字识别失败: \(error.localizedDescription)"
+        case .recognitionFailed:
+            return "文字识别失败"
         }
     }
 }

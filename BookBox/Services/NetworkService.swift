@@ -156,6 +156,13 @@ final class NetworkService: ObservableObject {
         }
     }
 
+    // MARK: - 健康检查
+
+    /// 详细连通性检测（服务器、数据库、AI）
+    func checkHealth() async throws -> HealthCheckResult {
+        try await request("GET", path: "/health/detailed", timeout: 15)
+    }
+
     // MARK: - 书库 API
 
     func fetchLibraries() async throws -> [Library] {
@@ -439,3 +446,16 @@ final class NetworkService: ObservableObject {
 
 /// 空响应体
 struct EmptyResponse: Codable {}
+
+/// 单项服务状态
+struct ServiceStatus: Codable {
+    let status: String
+    let message: String?
+}
+
+/// 详细健康检查结果
+struct HealthCheckResult: Codable {
+    let server: ServiceStatus
+    let database: ServiceStatus
+    let ai: ServiceStatus
+}

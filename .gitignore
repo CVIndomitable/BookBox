@@ -9,6 +9,13 @@ server/node_modules/
 .env
 server/.env
 
+# 部署信息（含服务器密码、IP、Token 等敏感数据）
+docs/部署信息.md
+CONFIGURATION.md
+
+# 应用配置（含服务器地址、API Token）
+BookBox/Models/AppConfig.swift
+
 # Xcode
 BookBox.xcodeproj/xcuserdata/
 BookBox.xcodeproj/project.xcworkspace/xcuserdata/

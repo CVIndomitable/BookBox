@@ -18,7 +18,7 @@ struct BookDetailView: View {
         self.scanItem = scanItem
         self.onSave = onSave
         _title = State(initialValue: scanItem.finalTitle)
-        _author = State(initialValue: scanItem.verifyResult?.author ?? "")
+        _author = State(initialValue: scanItem.finalAuthor ?? "")
         _isbn = State(initialValue: scanItem.verifyResult?.isbn ?? "")
         _publisher = State(initialValue: "")
     }
@@ -33,10 +33,12 @@ struct BookDetailView: View {
                 TextField("出版社", text: $publisher)
             }
 
-            Section("OCR 原始文本") {
-                Text(scanItem.extractedTitle.title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            if let rawText = scanItem.rawOcrText {
+                Section("原始识别文本") {
+                    Text(rawText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("校验状态") {
@@ -45,6 +47,10 @@ struct BookDetailView: View {
                     Spacer()
                     if let source = verifyResult?.source ?? scanItem.verifyResult?.source {
                         Text("来源: \(source)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if let confidence = scanItem.confidence {
+                        Text("AI 置信度: \(confidence)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -97,7 +103,6 @@ struct BookDetailView: View {
                     region: .mainland
                 )
                 verifyResult = result
-                // 用校验结果更新字段
                 if let resultAuthor = result.author, !resultAuthor.isEmpty {
                     author = resultAuthor
                 }
@@ -105,7 +110,7 @@ struct BookDetailView: View {
                     isbn = resultIsbn
                 }
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = error.chineseDescription
             }
             isVerifying = false
         }
@@ -114,12 +119,12 @@ struct BookDetailView: View {
     private func save() {
         var updated = scanItem
         let finalResult = VerifyResult(
-            status: verifyResult?.status ?? (title != scanItem.extractedTitle.title ? .manual : scanItem.status),
+            status: verifyResult?.status ?? (title != scanItem.title ? .manual : scanItem.status),
             title: title,
             author: author.isEmpty ? nil : author,
             isbn: isbn.isEmpty ? nil : isbn,
             coverUrl: verifyResult?.coverUrl ?? scanItem.verifyResult?.coverUrl,
-            source: verifyResult?.source ?? (title != scanItem.extractedTitle.title ? "manual" : scanItem.verifyResult?.source)
+            source: verifyResult?.source ?? (title != scanItem.title ? "manual" : scanItem.verifyResult?.source)
         )
         updated.verifyResult = finalResult
         onSave?(updated)

@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import prisma from './utils/prisma.js';
 import { authMiddleware } from './middleware/auth.js';
 import boxesRouter from './routes/boxes.js';
 import booksRouter from './routes/books.js';
@@ -32,6 +33,72 @@ app.get('/api/health', (req, res) => {
 
 // 认证中间件
 app.use('/api', authMiddleware);
+
+// 详细健康检查（需要认证）— 检测服务器、数据库、AI 连通性
+app.get('/api/health/detailed', async (req, res) => {
+  const results = {
+    server: { status: 'ok' },
+    database: { status: 'checking' },
+    ai: { status: 'checking' },
+  };
+
+  // 检查数据库连通性
+  try {
+    await prisma.$queryRawUnsafe('SELECT 1');
+    results.database = { status: 'ok' };
+  } catch (err) {
+    results.database = { status: 'error', message: '数据库连接失败' };
+  }
+
+  // 检查 AI 服务
+  try {
+    const settings = await prisma.userSetting.findFirst();
+    if (!settings || !settings.llmApiKey) {
+      results.ai = { status: 'not_configured', message: '未配置 API Key' };
+    } else {
+      const endpoint = (settings.llmEndpoint || 'https://api.xiaomimimo.com/anthropic').replace(/\/+$/, '');
+      const model = 'mimo-v2-flash';
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      try {
+        const response = await fetch(`${endpoint}/v1/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': settings.llmApiKey,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model,
+            max_tokens: 1,
+            messages: [{ role: 'user', content: 'ping' }],
+          }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+
+        if (response.ok) {
+          results.ai = { status: 'ok' };
+        } else if (response.status === 401 || response.status === 403) {
+          results.ai = { status: 'error', message: 'API Key 无效' };
+        } else {
+          results.ai = { status: 'error', message: `AI 服务返回 ${response.status}` };
+        }
+      } catch (fetchErr) {
+        clearTimeout(timeout);
+        if (fetchErr.name === 'AbortError') {
+          results.ai = { status: 'error', message: 'AI 服务连接超时' };
+        } else {
+          results.ai = { status: 'error', message: 'AI 服务无法连接' };
+        }
+      }
+    }
+  } catch (err) {
+    results.ai = { status: 'error', message: '检查 AI 配置时出错' };
+  }
+
+  res.json(results);
+});
 
 // 路由
 app.use('/api/boxes', boxesRouter);
