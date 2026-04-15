@@ -16,6 +16,13 @@ struct LibraryView: View {
     @State private var errorMessage: String?
     @State private var viewMode: ViewMode = .overview
     @State private var showLibraryCreate = false
+    @State private var showLibraryEdit = false
+    @State private var showDeleteConfirm = false
+    @State private var editingLibrary: Library?
+    @State private var editName = ""
+    @State private var editLocation = ""
+    @State private var editDescription = ""
+    @State private var isSaving = false
 
     enum ViewMode: String, CaseIterable {
         case overview = "总览"
@@ -81,6 +88,41 @@ struct LibraryView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showLibraryEdit) {
+                NavigationStack {
+                    Form {
+                        Section("书库信息") {
+                            TextField("书库名称", text: $editName)
+                            TextField("位置（可选）", text: $editLocation)
+                            TextField("备注（可选）", text: $editDescription, axis: .vertical)
+                                .lineLimit(3...6)
+                        }
+                    }
+                    .navigationTitle("编辑书库")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("取消") {
+                                showLibraryEdit = false
+                            }
+                        }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("保存") {
+                                updateLibrary()
+                            }
+                            .disabled(editName.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
+                        }
+                    }
+                }
+            }
+            .alert("确认删除", isPresented: $showDeleteConfirm) {
+                Button("取消", role: .cancel) { }
+                Button("删除", role: .destructive) {
+                    deleteLibrary()
+                }
+            } message: {
+                Text("删除书库「\(editingLibrary?.name ?? "")」后，其中的书籍不会被删除，但会失去书库归属。")
+            }
             .alert("加载失败", isPresented: Binding(
                 get: { errorMessage != nil },
                 set: { if !$0 { errorMessage = nil } }
@@ -136,6 +178,24 @@ struct LibraryView: View {
                             )
                         }
                         .tint(.primary)
+                        .contextMenu {
+                            Button {
+                                editingLibrary = library
+                                editName = library.name
+                                editLocation = library.location ?? ""
+                                editDescription = library.description ?? ""
+                                showLibraryEdit = true
+                            } label: {
+                                Label("重命名", systemImage: "pencil")
+                            }
+
+                            Button(role: .destructive) {
+                                editingLibrary = library
+                                showDeleteConfirm = true
+                            } label: {
+                                Label("删除书库", systemImage: "trash")
+                            }
+                        }
                     }
                 }
             }
@@ -396,6 +456,47 @@ struct LibraryView: View {
         guard hasMore, !isLoading else { return }
         currentPage += 1
         await loadBooks()
+    }
+
+    // MARK: - 书库编辑 / 删除
+
+    private func updateLibrary() {
+        guard let library = editingLibrary else { return }
+        isSaving = true
+        Task {
+            do {
+                let request = LibraryRequest(
+                    name: editName.trimmingCharacters(in: .whitespaces),
+                    location: editLocation.isEmpty ? nil : editLocation,
+                    description: editDescription.isEmpty ? nil : editDescription
+                )
+                let updated = try await NetworkService.shared.updateLibrary(id: library.id, request)
+                // 更新本地列表
+                if let idx = libraries.firstIndex(where: { $0.id == library.id }) {
+                    libraries[idx] = updated
+                }
+                showLibraryEdit = false
+            } catch {
+                errorMessage = error.chineseDescription
+            }
+            isSaving = false
+        }
+    }
+
+    private func deleteLibrary() {
+        guard let library = editingLibrary else { return }
+        Task {
+            do {
+                _ = try await NetworkService.shared.deleteLibrary(id: library.id)
+                libraries.removeAll { $0.id == library.id }
+                // 如果删除的是当前选中的书库，切换到第一个
+                if selectedLibraryId == library.id {
+                    selectedLibraryId = libraries.first?.id
+                }
+            } catch {
+                errorMessage = error.chineseDescription
+            }
+        }
     }
 }
 
