@@ -4,6 +4,18 @@ import { parseId, parseOptionalId, parsePagination, paginationResponse } from '.
 
 const router = Router();
 
+// 合法的位置类型
+const VALID_LOCATION_TYPES = ['none', 'shelf', 'box'];
+
+// 校验位置类型枚举值
+function validateLocationType(value) {
+  if (value && !VALID_LOCATION_TYPES.includes(value)) {
+    const err = new Error(`无效的位置类型: ${value}，合法值为 none/shelf/box`);
+    err.statusCode = 400;
+    throw err;
+  }
+}
+
 // 更新容器的 book_count（辅助函数，始终用 COUNT 重算）
 async function updateContainerCount(tx, type, id) {
   if (!type || !id || type === 'none') return;
@@ -20,6 +32,7 @@ async function updateContainerCount(tx, type, id) {
 // 校验位置是否存在
 async function validateLocation(locationType, locationId) {
   if (!locationType || locationType === 'none' || !locationId) return;
+  validateLocationType(locationType);
   if (locationType === 'shelf') {
     const shelf = await prisma.shelf.findUnique({ where: { id: locationId } });
     if (!shelf) {
@@ -73,6 +86,7 @@ router.get('/', async (req, res, next) => {
       where.locationId = parseId(boxId, '箱子 ID');
     } else {
       if (locationType) {
+        validateLocationType(locationType);
         where.locationType = locationType;
       }
       if (locationId) {
@@ -115,6 +129,7 @@ router.post('/', async (req, res, next) => {
     }
 
     const finalLocationType = locationType || 'none';
+    validateLocationType(finalLocationType);
     const finalLocationId = parseOptionalId(locationId);
 
     // 位置类型非 none 时必须提供 locationId，且验证目标存在
@@ -160,7 +175,7 @@ router.post('/', async (req, res, next) => {
       });
 
       return created;
-    });
+    }, { isolationLevel: 'Serializable' });
 
     res.status(201).json(book);
   } catch (err) {
@@ -180,6 +195,7 @@ router.post('/batch', async (req, res, next) => {
 
     // 兼容旧的 boxId 参数
     const finalLocationType = locationType || (boxId ? 'box' : 'none');
+    validateLocationType(finalLocationType);
     const finalLocationId = parseOptionalId(locationId) || parseOptionalId(boxId);
 
     // 验证目标位置存在
@@ -187,11 +203,16 @@ router.post('/batch', async (req, res, next) => {
       await validateLocation(finalLocationType, finalLocationId);
     }
 
+    const skipped = [];
     const results = await prisma.$transaction(async (tx) => {
       const created = [];
 
-      for (const bookData of books) {
-        if (!bookData.title) continue;
+      for (let i = 0; i < books.length; i++) {
+        const bookData = books[i];
+        if (!bookData.title) {
+          skipped.push({ index: i, reason: '缺少书名' });
+          continue;
+        }
 
         const book = await tx.book.create({
           data: {
@@ -232,9 +253,9 @@ router.post('/batch', async (req, res, next) => {
       }
 
       return created;
-    });
+    }, { isolationLevel: 'Serializable' });
 
-    res.status(201).json({ created: results.length, books: results });
+    res.status(201).json({ created: results.length, skipped: skipped.length, books: results, skippedDetails: skipped });
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     next(err);
@@ -303,6 +324,7 @@ router.put('/:id', async (req, res, next) => {
     const isMoving = locationType !== undefined;
     if (isMoving) {
       const newLocationType = locationType || 'none';
+      validateLocationType(newLocationType);
       const newLocationId = parseOptionalId(locationId);
 
       // 位置类型非 none 时必须提供 locationId
@@ -358,7 +380,7 @@ router.put('/:id', async (req, res, next) => {
       }
 
       return updated;
-    });
+    }, { isolationLevel: 'Serializable' });
 
     res.json(book);
   } catch (err) {
@@ -370,7 +392,7 @@ router.put('/:id', async (req, res, next) => {
   }
 });
 
-// 删除书籍（保留操作日志，将日志的 bookId 置空）
+// 删除书籍（日志通过外键 onDelete:SetNull 自动置空 bookId）
 router.delete('/:id', async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书籍 ID');
@@ -381,7 +403,7 @@ router.delete('/:id', async (req, res, next) => {
     }
 
     await prisma.$transaction(async (tx) => {
-      // 写入删除日志（在删除书籍之前）
+      // 写入删除日志（在删除书籍之前，包含完整书籍信息便于审计追溯）
       await tx.bookLog.create({
         data: {
           bookId: id,
@@ -390,24 +412,18 @@ router.delete('/:id', async (req, res, next) => {
           fromId: book.locationId,
           toType: 'none',
           method: 'manual',
-          note: `删除书籍: ${book.title}`,
+          note: `删除书籍: ${book.title}${book.author ? ` / ${book.author}` : ''}`,
         },
       });
 
-      // 将已有日志的 bookId 置空（保留审计记录）
-      await tx.bookLog.updateMany({
-        where: { bookId: id },
-        data: { bookId: null },
-      });
-
-      // 删除书籍
+      // 删除书籍（外键 onDelete:SetNull 会自动将日志的 bookId 置空）
       await tx.book.delete({ where: { id } });
 
       // 更新容器 book_count
       if (book.locationType !== 'none' && book.locationId) {
         await updateContainerCount(tx, book.locationType, book.locationId);
       }
-    });
+    }, { isolationLevel: 'Serializable' });
 
     res.json({ message: '书籍已删除' });
   } catch (err) {
@@ -428,6 +444,7 @@ router.post('/:id/move', async (req, res, next) => {
     if (!toType) {
       return res.status(400).json({ error: '请指定目标位置类型' });
     }
+    validateLocationType(toType);
 
     const book = await prisma.book.findUnique({ where: { id } });
     if (!book) {
@@ -473,7 +490,7 @@ router.post('/:id/move', async (req, res, next) => {
           rawInput,
         },
       });
-    });
+    }, { isolationLevel: 'Serializable' });
 
     res.json({ message: '书籍已移动' });
   } catch (err) {

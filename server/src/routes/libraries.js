@@ -4,20 +4,18 @@ import { parseId } from '../utils/validate.js';
 
 const router = Router();
 
-// 获取所有书库列表（附带统计）
+// 获取所有书库列表（附带统计，使用聚合避免 N+1 查询）
 router.get('/', async (req, res, next) => {
   try {
     const libraries = await prisma.library.findMany({
+      include: { _count: { select: { books: true } } },
       orderBy: { createdAt: 'desc' },
     });
 
-    // 为每个书库附加书籍数量
-    const result = await Promise.all(
-      libraries.map(async (lib) => {
-        const bookCount = await prisma.book.count({ where: { libraryId: lib.id } });
-        return { ...lib, bookCount };
-      })
-    );
+    const result = libraries.map((lib) => {
+      const { _count, ...rest } = lib;
+      return { ...rest, bookCount: _count.books };
+    });
 
     res.json(result);
   } catch (err) {

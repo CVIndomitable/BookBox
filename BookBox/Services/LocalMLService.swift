@@ -2,7 +2,7 @@ import Foundation
 
 /// 本地 Core ML 服务 — 可选功能，用于离线书名提取和分类
 /// 当前为占位实现，后续集成 Core ML 模型时填充
-#warning("LocalMLService 为占位实现，需集成 Core ML 模型")
+// TODO: LocalMLService 为占位实现，需集成 Core ML 模型
 final class LocalMLService {
     static let shared = LocalMLService()
     private init() {}

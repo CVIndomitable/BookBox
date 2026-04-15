@@ -155,7 +155,7 @@ router.delete('/:id', async (req, res, next) => {
       }
 
       await tx.shelf.delete({ where: { id } });
-    });
+    }, { isolationLevel: 'Serializable' });
 
     res.json({ message: '书架已删除' });
   } catch (err) {
@@ -231,7 +231,7 @@ router.post('/:id/books', async (req, res, next) => {
           method: 'manual',
         })),
       });
-    });
+    }, { isolationLevel: 'Serializable' });
 
     res.json({ message: `已将 ${bookIds.length} 本书放入书架` });
   } catch (err) {
@@ -272,7 +272,7 @@ router.delete('/:id/books/:bookId', async (req, res, next) => {
           method: 'manual',
         },
       });
-    });
+    }, { isolationLevel: 'Serializable' });
 
     res.json({ message: '已从书架移走' });
   } catch (err) {

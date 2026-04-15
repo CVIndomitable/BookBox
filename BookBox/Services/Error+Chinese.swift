@@ -33,9 +33,22 @@ extension Error {
             }
         }
 
-        // DecodingError 映射
-        if self is DecodingError {
-            return "数据解析失败"
+        // DecodingError 映射（附带字段信息帮助排查）
+        if let decodingError = self as? DecodingError {
+            switch decodingError {
+            case .keyNotFound(let key, _):
+                return "数据解析失败：缺少字段「\(key.stringValue)」"
+            case .typeMismatch(let type, let context):
+                let field = context.codingPath.map(\.stringValue).joined(separator: ".")
+                return "数据解析失败：字段「\(field)」类型不匹配（期望 \(type)）"
+            case .valueNotFound(_, let context):
+                let field = context.codingPath.map(\.stringValue).joined(separator: ".")
+                return "数据解析失败：字段「\(field)」值为空"
+            case .dataCorrupted:
+                return "数据解析失败：数据格式损坏"
+            @unknown default:
+                return "数据解析失败"
+            }
         }
 
         // EncodingError 映射

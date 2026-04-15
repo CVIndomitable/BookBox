@@ -44,7 +44,12 @@ router.put('/', async (req, res, next) => {
     const data = {};
     if (regionMode !== undefined) data.regionMode = regionMode;
     if (llmProvider !== undefined) data.llmProvider = llmProvider;
-    if (llmApiKey !== undefined) data.llmApiKey = llmApiKey;
+    if (llmApiKey !== undefined) {
+      if (llmApiKey && llmApiKey.length > 500) {
+        return res.status(400).json({ error: 'API Key 长度不能超过 500 个字符' });
+      }
+      data.llmApiKey = llmApiKey;
+    }
     if (llmEndpoint !== undefined) data.llmEndpoint = llmEndpoint;
     if (llmModel !== undefined) data.llmModel = llmModel;
     if (llmSupportsSearch !== undefined)

@@ -40,6 +40,7 @@ router.post('/', async (req, res, next) => {
       return res.status(400).json({ error: '箱子名称不能为空' });
     }
 
+    // 使用 Serializable 隔离级别防止并发生成重复 box_uid
     const box = await prisma.$transaction(async (tx) => {
       const today = new Date();
       const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
@@ -64,7 +65,7 @@ router.post('/', async (req, res, next) => {
       }
 
       return tx.box.create({ data });
-    });
+    }, { isolationLevel: 'Serializable' });
 
     res.status(201).json(box);
   } catch (err) {
@@ -174,7 +175,7 @@ router.delete('/:id', async (req, res, next) => {
       }
 
       await tx.box.delete({ where: { id } });
-    });
+    }, { isolationLevel: 'Serializable' });
 
     res.json({ message: '箱子已删除' });
   } catch (err) {
@@ -249,7 +250,7 @@ router.post('/:id/books', async (req, res, next) => {
           method: 'manual',
         })),
       });
-    });
+    }, { isolationLevel: 'Serializable' });
 
     res.json({ message: `已添加 ${bookIds.length} 本书` });
   } catch (err) {
@@ -290,7 +291,7 @@ router.delete('/:id/books/:bookId', async (req, res, next) => {
           method: 'manual',
         },
       });
-    });
+    }, { isolationLevel: 'Serializable' });
 
     res.json({ message: '已从箱子中移除' });
   } catch (err) {

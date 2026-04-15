@@ -9,6 +9,7 @@ struct VoiceAssistantButton: View {
     @State private var errorMessage: String?
     @GestureState private var dragOffset = CGSize.zero
     @State private var baseOffset = CGSize.zero
+    @State private var processingTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,6 +33,8 @@ struct VoiceAssistantButton: View {
                     .background(Circle().fill(.ultraThickMaterial).frame(width: 56, height: 56))
                     .shadow(radius: 4)
             }
+            .accessibilityLabel(speechService.isRecording ? "停止录音" : "语音助手")
+            .accessibilityHint(isExpanded ? "点击关闭语音面板" : "点击打开语音助手")
         }
         .offset(x: baseOffset.width + dragOffset.width, y: baseOffset.height + dragOffset.height)
         .gesture(
@@ -44,6 +47,10 @@ struct VoiceAssistantButton: View {
                     baseOffset.height += value.translation.height
                 }
         )
+        .onDisappear {
+            processingTask?.cancel()
+            processingTask = nil
+        }
     }
 
     private var expandedPanel: some View {
@@ -141,7 +148,8 @@ struct VoiceAssistantButton: View {
         isProcessing = true
         errorMessage = nil
 
-        Task {
+        processingTask?.cancel()
+        processingTask = Task {
             do {
                 // 获取书库状态作为上下文
                 let overview = try await NetworkService.shared.fetchLibraryOverview()

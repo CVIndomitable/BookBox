@@ -13,6 +13,7 @@ struct LibraryView: View {
     @State private var currentPage = 1
     @State private var totalBooks = 0
     @State private var hasMore = true
+    @State private var isPaginating = false
     @State private var errorMessage: String?
     @State private var viewMode: ViewMode = .overview
     @State private var showLibraryCreate = false
@@ -479,23 +480,32 @@ struct LibraryView: View {
     }
 
     private func loadMore() async {
-        guard hasMore, !isLoading else { return }
+        guard hasMore, !isLoading, !isPaginating else { return }
+        isPaginating = true
         currentPage += 1
         await loadBooks()
+        isPaginating = false
     }
 
     // MARK: - 书籍删除
 
     private func deleteBooks(at offsets: IndexSet) {
         let booksToDelete = offsets.map { books[$0] }
-        books.remove(atOffsets: offsets)
-        for book in booksToDelete {
-            Task {
+        Task {
+            var failed: [Book] = []
+            // 先从 UI 移除（乐观更新）
+            books.remove(atOffsets: offsets)
+            for book in booksToDelete {
                 do {
                     _ = try await NetworkService.shared.deleteBook(id: book.id)
                 } catch {
+                    failed.append(book)
                     errorMessage = error.chineseDescription
                 }
+            }
+            // 删除失败的书籍恢复到列表
+            if !failed.isEmpty {
+                books.append(contentsOf: failed)
             }
         }
     }
@@ -529,9 +539,9 @@ struct LibraryView: View {
         guard let library = editingLibrary else { return }
         Task {
             do {
+                // 先执行删除请求，成功后再更新 UI
                 _ = try await NetworkService.shared.deleteLibrary(id: library.id)
                 libraries.removeAll { $0.id == library.id }
-                // 如果删除的是当前选中的书库，切换到第一个
                 if selectedLibraryId == library.id {
                     selectedLibraryId = libraries.first?.id
                 }
@@ -717,7 +727,11 @@ struct LibraryBookDetailView: View {
         .sheet(isPresented: $showMove) {
             MoveBookSheet(bookId: book.id) {
                 Task {
-                    detail = try? await NetworkService.shared.fetchBook(id: book.id)
+                    do {
+                        detail = try await NetworkService.shared.fetchBook(id: book.id)
+                    } catch {
+                        errorMessage = "刷新书籍详情失败: \(error.chineseDescription)"
+                    }
                 }
             }
         }

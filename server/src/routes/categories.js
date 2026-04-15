@@ -57,16 +57,33 @@ router.post('/', async (req, res, next) => {
   }
 });
 
+// 检测分类循环引用（A→B→C→A）
+async function hasCycle(targetId, newParentId) {
+  let current = newParentId;
+  const visited = new Set();
+  while (current) {
+    if (current === targetId) return true;
+    if (visited.has(current)) return false; // 已有环，但不涉及 targetId
+    visited.add(current);
+    const cat = await prisma.category.findUnique({ where: { id: current }, select: { parentId: true } });
+    current = cat?.parentId;
+  }
+  return false;
+}
+
 // 更新分类
 router.put('/:id', async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '分类 ID');
     const { name, parentId } = req.body;
 
-    // 防止将分类设为自己的子分类
+    // 防止将分类设为自己的子分类（直接 + 间接循环）
     const parsedParentId = parseOptionalId(parentId);
     if (parsedParentId && parsedParentId === id) {
       return res.status(400).json({ error: '分类不能设为自己的子分类' });
+    }
+    if (parsedParentId && await hasCycle(id, parsedParentId)) {
+      return res.status(400).json({ error: '不能设为子分类的子分类（会产生循环引用）' });
     }
 
     const data = {};

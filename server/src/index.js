@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import prisma from './utils/prisma.js';
 import { authMiddleware } from './middleware/auth.js';
 import boxesRouter from './routes/boxes.js';
@@ -15,6 +16,10 @@ import librariesRouter from './routes/libraries.js';
 import llmRouter from './routes/llm.js';
 
 // 启动时检查关键环境变量
+if (!process.env.DATABASE_URL) {
+  console.error('❌ 致命错误：DATABASE_URL 未配置');
+  process.exit(1);
+}
 if (!process.env.API_TOKEN) {
   console.warn('⚠ 警告：API_TOKEN 未配置，所有认证请求将被拒绝');
 }
@@ -23,8 +28,32 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // 基础中间件
-app.use(cors());
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 app.use(express.json({ limit: '20mb' }));
+
+// 全局速率限制
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 分钟
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: '请求过于频繁，请稍后再试' },
+});
+app.use('/api', apiLimiter);
+
+// LLM 端点更严格的速率限制（防止刷接口产生费用）
+const llmLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 分钟
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'AI 识别请求过于频繁，请稍后再试' },
+});
+app.use('/api/llm', llmLimiter);
 
 // 健康检查（无需认证）
 app.get('/api/health', (req, res) => {
@@ -134,6 +163,18 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: '服务器内部错误' });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`BookBox 服务器已启动，端口: ${PORT}`);
 });
+
+// 优雅关闭：断开数据库连接
+async function shutdown(signal) {
+  console.log(`收到 ${signal}，正在关闭服务器...`);
+  server.close(async () => {
+    await prisma.$disconnect();
+    console.log('数据库连接已断开，进程退出');
+    process.exit(0);
+  });
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import crypto from 'crypto';
 import prisma from '../utils/prisma.js';
 import { parseId } from '../utils/validate.js';
 
@@ -303,8 +304,8 @@ router.post('/voice-command', async (req, res, next) => {
       return res.status(400).json({ error: '缺少语音文本' });
     }
 
-    // 检查缓存（包含 systemPrompt 以区分不同书库上下文）
-    const promptHash = (systemPrompt || '').length.toString(36) + normalizeText((systemPrompt || '').slice(-80));
+    // 检查缓存（包含 systemPrompt 的哈希以区分不同书库上下文）
+    const promptHash = crypto.createHash('md5').update(systemPrompt || '').digest('hex').slice(0, 12);
     const cacheKey = normalizeText(text) + '|' + promptHash;
     if (!noCache) {
       const cached = voiceCache.get(cacheKey);

@@ -40,6 +40,7 @@ struct Pagination: Codable {
 /// 批量创建响应
 struct BatchCreateResponse: Codable {
     let created: Int
+    let skipped: Int?
     let books: [Book]
 }
 
@@ -111,15 +112,28 @@ final class NetworkService: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: urlRequest)
-        } catch {
-            #if DEBUG
-            print("[NET] 请求失败: \(error)")
-            #endif
-            throw error
+        // GET 请求自动重试（最多 3 次，指数退避）
+        let maxRetries = method == "GET" ? 3 : 1
+        var lastError: Error?
+        var data: Data = Data()
+        var response: URLResponse = URLResponse()
+        for attempt in 1...maxRetries {
+            do {
+                (data, response) = try await session.data(for: urlRequest)
+                lastError = nil
+                break
+            } catch {
+                lastError = error
+                #if DEBUG
+                print("[NET] 请求失败 (第\(attempt)次): \(error)")
+                #endif
+                if attempt < maxRetries {
+                    try? await Task.sleep(nanoseconds: UInt64(attempt) * 1_000_000_000)
+                }
+            }
+        }
+        if let lastError {
+            throw lastError
         }
 
         guard let httpResponse = response as? HTTPURLResponse else {

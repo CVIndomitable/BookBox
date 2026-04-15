@@ -298,7 +298,10 @@ struct PreClassifyView: View {
         Task {
             defer { isProcessing = false }
             do {
-                guard let compressed = compressImageForRecognition(image) else {
+                // 图片压缩放到后台线程避免阻塞 UI
+                guard let compressed = await Task.detached(priority: .userInitiated, operation: {
+                    compressImageForRecognition(image)
+                }).value else {
                     errorMessage = "图片压缩失败，请重试"
                     return
                 }
@@ -306,10 +309,11 @@ struct PreClassifyView: View {
                 if books.isEmpty {
                     errorMessage = "未识别到书籍，请调整角度或距离后重试"
                 } else {
+                    // 回到主线程更新状态后再保存，确保顺序一致
                     recognizedBooks.append(contentsOf: books)
                     autoSaveCurrentSession()
-                    // 保存扫描记录
-                    Task {
+                    // 保存扫描记录（不阻塞主流程）
+                    Task.detached {
                         try? await NetworkService.shared.saveScanRecord(
                             mode: .preclassify,
                             extractedTitles: books.map(\.title)
@@ -335,14 +339,27 @@ struct PreClassifyView: View {
     // MARK: - 本地保存
 
     private func loadSessions() {
-        guard let data = try? Data(contentsOf: Self.sessionsFileURL),
-              let sessions = try? JSONDecoder().decode([PreClassifySession].self, from: data) else { return }
-        savedSessions = sessions
+        do {
+            let data = try Data(contentsOf: Self.sessionsFileURL)
+            savedSessions = try JSONDecoder().decode([PreClassifySession].self, from: data)
+        } catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoSuchFileError {
+            // 文件不存在是正常情况（首次启动）
+        } catch {
+            #if DEBUG
+            print("[PreClassify] 加载会话失败: \(error)")
+            #endif
+        }
     }
 
     private func persistSessions() {
-        guard let data = try? JSONEncoder().encode(savedSessions) else { return }
-        try? data.write(to: Self.sessionsFileURL, options: .atomic)
+        do {
+            let data = try JSONEncoder().encode(savedSessions)
+            try data.write(to: Self.sessionsFileURL, options: .atomic)
+        } catch {
+            #if DEBUG
+            print("[PreClassify] 保存会话失败: \(error)")
+            #endif
+        }
     }
 
     private func saveAsNewSession(name: String) {
