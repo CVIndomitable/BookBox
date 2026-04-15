@@ -181,12 +181,45 @@ function cleanJson(text) {
   return text.replace(/```json/g, '').replace(/```/g, '').trim();
 }
 
+// 清理并验证 base64 图片数据
+function cleanBase64Image(raw) {
+  // 去掉可能的 data URI 前缀（如 data:image/jpeg;base64,）
+  let b64 = raw.replace(/^data:image\/[a-z]+;base64,/i, '');
+  // 去掉空白字符（换行、空格等）
+  b64 = b64.replace(/\s/g, '');
+  // 补齐 padding
+  const remainder = b64.length % 4;
+  if (remainder === 2) b64 += '==';
+  else if (remainder === 3) b64 += '=';
+  // 验证是否为合法 base64
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(b64)) {
+    return null;
+  }
+  return b64;
+}
+
 // POST /recognize — 多模态识别书籍
 router.post('/recognize', async (req, res, next) => {
   try {
     const { image } = req.body;
     if (!image) {
       return res.status(400).json({ error: '缺少图片数据' });
+    }
+
+    // 清理并验证 base64 数据
+    const cleanedImage = cleanBase64Image(image);
+    if (!cleanedImage) {
+      console.warn('[LLM] base64 验证失败, 原始长度:', image.length, '前40字符:', image.slice(0, 40));
+      return res.status(400).json({ error: '图片数据格式无效，请重新拍照' });
+    }
+
+    // 检查解码后是否为 JPEG（以 FFD8 开头）
+    const buf = Buffer.from(cleanedImage, 'base64');
+    const isJpeg = buf.length > 2 && buf[0] === 0xFF && buf[1] === 0xD8;
+    const isPng = buf.length > 4 && buf[0] === 0x89 && buf[1] === 0x50;
+    const mediaType = isPng ? 'image/png' : 'image/jpeg';
+    if (!isJpeg && !isPng) {
+      console.warn('[LLM] 图片格式异常, 头部字节:', buf.slice(0, 4).toString('hex'), '大小:', buf.length);
     }
 
     const config = await getLlmConfig();
@@ -201,8 +234,8 @@ router.post('/recognize', async (req, res, next) => {
               type: 'image',
               source: {
                 type: 'base64',
-                media_type: 'image/jpeg',
-                data: image,
+                media_type: mediaType,
+                data: cleanedImage,
               },
             },
             {
@@ -226,20 +259,39 @@ router.post('/recognize', async (req, res, next) => {
       ],
     });
 
+    if (!text) {
+      console.warn('[LLM] MiMo 返回空内容');
+      return res.status(502).json({ error: 'AI 模型未返回有效内容，请重试' });
+    }
+
     const cleaned = cleanJson(text);
     let books = [];
     try {
       books = JSON.parse(cleaned);
-    } catch {
-      books = [];
+    } catch (parseErr) {
+      console.warn('[LLM] JSON 解析失败，原始内容:', text.slice(0, 500));
+      return res.status(502).json({ error: 'AI 返回格式异常，请重试' });
+    }
+
+    if (!Array.isArray(books)) {
+      books = [books];
     }
 
     res.json({ books });
   } catch (err) {
+    console.error('[LLM recognize]', err.message);
     if (err.statusCode) {
       return res.status(err.statusCode).json({ error: err.message });
     }
-    next(err);
+    // 从 MiMo 错误信息中提取用户可读的描述
+    const msg = err.message || '';
+    if (msg.includes('Invalid API Key')) {
+      return res.status(401).json({ error: 'AI API Key 无效，请在设置中重新配置' });
+    }
+    if (msg.includes('模型请求超时')) {
+      return res.status(504).json({ error: 'AI 识别超时，请稍后重试' });
+    }
+    return res.status(502).json({ error: 'AI 识别服务异常，请稍后重试' });
   }
 });
 
