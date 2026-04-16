@@ -1,8 +1,7 @@
 import prisma from './prisma.js';
 
-// 默认模型（供应商未填写时使用）
-export const DEFAULT_VISION_MODEL = 'mimo-v2-omni';
-export const DEFAULT_TEXT_MODEL = 'mimo-v2-flash';
+// 供应商必须显式填写对应 kind 的模型名；未填写视为不参与该类型调用。
+// 例如学鼎仅填 text_model，会自动从视觉池中跳过。
 
 // 校验 endpoint URL，防止 SSRF
 export function validateEndpoint(endpoint) {
@@ -46,9 +45,16 @@ export function validateEndpoint(endpoint) {
 }
 
 // 获取所有启用的供应商，按优先级升序（数字越小越优先）
-export async function getEnabledSuppliers() {
+// kind 指定后只返回该类型模型字段非空的供应商（vision/text）。
+export async function getEnabledSuppliers(kind) {
+  const where = { enabled: true };
+  if (kind === 'vision') {
+    where.visionModel = { not: null };
+  } else if (kind === 'text') {
+    where.textModel = { not: null };
+  }
   return await prisma.llmSupplier.findMany({
-    where: { enabled: true },
+    where,
     orderBy: [{ priority: 'asc' }, { id: 'asc' }],
   });
 }
@@ -168,9 +174,12 @@ async function callOpenAI(supplier, { model, maxTokens, system, userText, image 
 
 // 单次调用某个供应商
 async function callOne(supplier, payload) {
-  const model = payload.kind === 'vision'
-    ? (supplier.visionModel || DEFAULT_VISION_MODEL)
-    : (supplier.textModel || DEFAULT_TEXT_MODEL);
+  const model = payload.kind === 'vision' ? supplier.visionModel : supplier.textModel;
+  if (!model) {
+    const err = new Error(`供应商 ${supplier.name} 未配置 ${payload.kind} 模型`);
+    err.statusCode = 422;
+    throw err;
+  }
 
   const protocol = (supplier.protocol || 'anthropic').toLowerCase();
   const callFn = protocol === 'openai' ? callOpenAI : callAnthropic;
@@ -201,9 +210,9 @@ function markFail(id, message) {
  * 返回: { text, supplier: { id, name, priority, degraded, topName, topPriority, triedCount, attempts } }
  */
 export async function callWithFallback(payload) {
-  const suppliers = await getEnabledSuppliers();
+  const suppliers = await getEnabledSuppliers(payload.kind);
   if (suppliers.length === 0) {
-    const err = new Error('未配置任何启用的 AI 供应商，请联系管理员');
+    const err = new Error(`未配置任何支持 ${payload.kind} 类型的 AI 供应商，请联系管理员`);
     err.statusCode = 422;
     throw err;
   }
@@ -247,10 +256,15 @@ export async function callWithFallback(payload) {
 }
 
 // 仅供 health check 使用的单供应商 ping
+// 优先走 text 模型；只配了 vision 的供应商退回用 vision 模型 ping。
 export async function pingSupplier(supplier) {
+  const kind = supplier.textModel ? 'text' : (supplier.visionModel ? 'vision' : null);
+  if (!kind) {
+    return { ok: false, supplier: supplier.name, error: '未配置任何模型' };
+  }
   try {
     const text = await callOne(supplier, {
-      kind: 'text',
+      kind,
       maxTokens: 1,
       userText: 'ping',
     });
