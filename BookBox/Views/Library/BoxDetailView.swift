@@ -9,6 +9,7 @@ struct BoxDetailView: View {
     @State private var errorMessage: String?
     @State private var showEdit = false
     @State private var showDeleteConfirm = false
+    @State private var showAddBooks = false
     @State private var editName = ""
     @State private var editDescription = ""
     @State private var isSaving = false
@@ -66,6 +67,15 @@ struct BoxDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showAddBooks = true
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title3)
+                }
+                .disabled(detail == nil)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button {
                         editName = detail?.name ?? box.name
@@ -88,6 +98,16 @@ struct BoxDetailView: View {
         }
         .task { await loadDetail() }
         .refreshable { await loadDetail() }
+        .sheet(isPresented: $showAddBooks) {
+            BoxAddBooksSheet(
+                boxId: box.id,
+                boxName: detail?.name ?? box.name,
+                libraryId: detail?.libraryId ?? box.libraryId,
+                onCompleted: {
+                    Task { await loadDetail() }
+                }
+            )
+        }
         .sheet(isPresented: $showEdit) {
             editSheet
         }
