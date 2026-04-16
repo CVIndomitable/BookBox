@@ -651,6 +651,7 @@ struct LibraryBookDetailView: View {
     @State private var editIsbn = ""
     @State private var editPublisher = ""
     @State private var isSaving = false
+    @State private var isConfirmingStatus = false
 
     var body: some View {
         Group {
@@ -695,16 +696,42 @@ struct LibraryBookDetailView: View {
                         }
                     }
 
-                    Section("校验信息") {
+                    Section {
                         if let status = detail.verifyStatus {
                             HStack {
                                 Text("校验状态")
                                 Spacer()
-                                StatusBadge(status: status)
+                                if isConfirmingStatus {
+                                    ProgressView()
+                                } else {
+                                    StatusBadge(status: status)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                if status == .uncertain && !isConfirmingStatus {
+                                    confirmVerifyStatus()
+                                }
+                            }
+                            .onLongPressGesture(minimumDuration: 0.5) {
+                                if status == .matched && !isConfirmingStatus {
+                                    revertVerifyStatus()
+                                }
                             }
                         }
                         if let source = detail.verifySource {
                             LabeledContent("校验来源", value: source)
+                        }
+                    } header: {
+                        Text("校验信息")
+                    } footer: {
+                        switch detail.verifyStatus {
+                        case .uncertain:
+                            Text("点击「待确认」可改为已匹配")
+                        case .matched:
+                            Text("长按「已匹配」可改回待确认")
+                        default:
+                            EmptyView()
                         }
                     }
 
@@ -864,6 +891,38 @@ struct LibraryBookDetailView: View {
             } catch {
                 errorMessage = error.chineseDescription
             }
+        }
+    }
+
+    private func confirmVerifyStatus() {
+        setVerifyStatus(.matched)
+    }
+
+    private func revertVerifyStatus() {
+        setVerifyStatus(.uncertain)
+    }
+
+    private func setVerifyStatus(_ newStatus: VerifyStatus) {
+        guard let current = detail else { return }
+        isConfirmingStatus = true
+        Task {
+            do {
+                let request = NewBookRequest(
+                    title: current.title,
+                    author: current.author,
+                    isbn: current.isbn,
+                    publisher: current.publisher,
+                    coverUrl: current.coverUrl,
+                    categoryId: current.categoryId,
+                    verifyStatus: newStatus,
+                    verifySource: current.verifySource,
+                    rawOcrText: current.rawOcrText
+                )
+                detail = try await NetworkService.shared.updateBook(id: book.id, request)
+            } catch {
+                errorMessage = error.chineseDescription
+            }
+            isConfirmingStatus = false
         }
     }
 }

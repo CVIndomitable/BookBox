@@ -33,7 +33,9 @@ struct BoxDetailView: View {
                     if let books = detail.books, !books.isEmpty {
                         Section {
                             ForEach(books) { book in
-                                NavigationLink(value: book) {
+                                NavigationLink {
+                                    LibraryBookDetailView(book: book)
+                                } label: {
                                     BookRow(book: book)
                                 }
                             }
@@ -50,9 +52,6 @@ struct BoxDetailView: View {
                     }
                 }
                 .listStyle(.insetGrouped)
-                .navigationDestination(for: Book.self) { book in
-                    LibraryBookDetailView(book: book)
-                }
             }
         }
         .navigationTitle(detail?.name ?? box.name)
