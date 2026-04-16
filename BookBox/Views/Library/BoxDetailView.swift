@@ -105,7 +105,12 @@ struct BoxDetailView: View {
             Button("取消", role: .cancel) {}
             Button("删除", role: .destructive) { deleteBox() }
         } message: {
-            Text("删除箱子后，箱内书籍不会被删除，但会变为未归位状态。")
+            let count = detail?.bookCount ?? box.bookCount
+            if count > 0 {
+                Text("删除箱子后，箱内 \(count) 本书不会被删除，但会变为未归位状态。")
+            } else {
+                Text("删除箱子后，若有书籍将变为未归位状态。")
+            }
         }
         .alert("操作失败", isPresented: Binding(
             get: { errorMessage != nil },

@@ -151,15 +151,17 @@ struct VoiceAssistantButton: View {
         processingTask?.cancel()
         processingTask = Task {
             do {
-                // 获取书库状态作为上下文
-                let overview = try await NetworkService.shared.fetchLibraryOverview()
+                // 获取当前书库状态作为上下文（多书库下按 lastLibraryId 过滤）
+                let lastLibraryId = UserDefaults.standard.integer(forKey: "lastLibraryId")
+                let libraryId: Int? = lastLibraryId > 0 ? lastLibraryId : nil
+                let overview = try await NetworkService.shared.fetchLibraryOverview(libraryId: libraryId)
 
                 let context = LibraryContext(
-                    shelves: overview.shelves.map { ($0.name, $0.bookCount) },
-                    boxes: overview.boxes.map { ($0.name, $0.boxUid, $0.bookCount) }
+                    shelves: overview.shelves.map { .init(name: $0.name, bookCount: $0.bookCount) },
+                    boxes: overview.boxes.map { .init(name: $0.name, uid: $0.boxUid, bookCount: $0.bookCount) }
                 )
 
-                let result = try await NetworkService.shared.processVoiceCommand(text: text, systemPrompt: context.systemPrompt)
+                let result = try await NetworkService.shared.processVoiceCommand(text: text, context: context)
                 aiReply = (result.cached == true ? "⚡ " : "") + result.reply
 
                 // 执行指令
@@ -172,22 +174,25 @@ struct VoiceAssistantButton: View {
     }
 
     private func executeCommand(_ result: VoiceCommandResult) async throws {
+        let stored = UserDefaults.standard.integer(forKey: "lastLibraryId")
+        let libraryId: Int? = stored > 0 ? stored : nil
+
         switch result.action {
         case "move":
             guard let bookTitle = result.bookTitle, let target = result.target else { return }
-            // 搜索书籍
-            let searchResult = try await NetworkService.shared.fetchBooks(search: bookTitle)
+            // 在当前书库范围搜索书籍
+            let searchResult = try await NetworkService.shared.fetchBooks(search: bookTitle, libraryId: libraryId)
             guard let book = searchResult.data.first else { return }
 
-            // 查找目标
+            // 查找目标（限定在当前书库）
             if target.type == "shelf" {
-                let shelves = try await NetworkService.shared.fetchShelves()
+                let shelves = try await NetworkService.shared.fetchShelves(libraryId: libraryId)
                 if let shelf = shelves.first(where: { $0.name.contains(target.name) }) {
                     let req = MoveBookRequest(toType: .shelf, toId: shelf.id, method: "voice", rawInput: speechService.recognizedText)
                     _ = try await NetworkService.shared.moveBook(id: book.id, request: req)
                 }
             } else if target.type == "box" {
-                let boxes = try await NetworkService.shared.fetchBoxes()
+                let boxes = try await NetworkService.shared.fetchBoxes(libraryId: libraryId)
                 if let box = boxes.first(where: { $0.name.contains(target.name) }) {
                     let req = MoveBookRequest(toType: .box, toId: box.id, method: "voice", rawInput: speechService.recognizedText)
                     _ = try await NetworkService.shared.moveBook(id: book.id, request: req)

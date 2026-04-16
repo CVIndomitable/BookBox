@@ -113,6 +113,12 @@ router.post('/recognize', async (req, res, next) => {
     }
 
     const buf = Buffer.from(cleanedImage, 'base64');
+    // 限制解码后图片大小 5MB，防止大图拖垮内存和 AI 调用费用
+    const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+    if (buf.length > MAX_IMAGE_BYTES) {
+      console.warn('[LLM] 图片过大:', buf.length, '字节');
+      return res.status(413).json({ error: '图片过大（上限 5MB），请重新拍照或压缩后上传' });
+    }
     const isJpeg = buf.length > 2 && buf[0] === 0xFF && buf[1] === 0xD8;
     const isPng = buf.length > 4 && buf[0] === 0x89 && buf[1] === 0x50;
     const mediaType = isPng ? 'image/png' : 'image/jpeg';
@@ -171,16 +177,57 @@ router.post('/recognize', async (req, res, next) => {
   }
 });
 
+// 基于书库上下文构建固定格式的 system prompt
+// 客户端仅传结构化上下文，禁止直接拼接 prompt，避免提示注入
+function buildVoiceSystemPrompt(context) {
+  const parts = ['你是 BookBox 书库助手。用户通过语音管理自己的书库。'];
+
+  const shelves = Array.isArray(context?.shelves) ? context.shelves : [];
+  const boxes = Array.isArray(context?.boxes) ? context.boxes : [];
+
+  if (shelves.length || boxes.length) {
+    parts.push('当前书库状态：');
+  }
+  if (shelves.length) {
+    const desc = shelves
+      .slice(0, 50)
+      .map((s) => `${String(s.name || '').slice(0, 40)}（${Number(s.bookCount) || 0}本）`)
+      .join('、');
+    parts.push(`书架：${desc}`);
+  }
+  if (boxes.length) {
+    const desc = boxes
+      .slice(0, 50)
+      .map((b) => `${String(b.uid || '').slice(0, 20)} ${String(b.name || '').slice(0, 40)}（${Number(b.bookCount) || 0}本）`)
+      .join('、');
+    parts.push(`箱子（已归档）：${desc}`);
+  }
+
+  parts.push('');
+  parts.push('请根据用户指令返回 JSON：');
+  parts.push('{"action": "move|query|edit|list", "bookTitle": "书名", "bookId": null, "target": {"type": "shelf|box", "name": "名称"}, "reply": "回复用户的话"}');
+  parts.push('只返回 JSON，不要添加解释或 markdown 代码块。');
+  return parts.join('\n');
+}
+
 // POST /voice-command — 语音指令解析（带缓存）
+// 请求体：{ text, context?: { shelves: [{name, bookCount}], boxes: [{name, uid, bookCount}] }, noCache? }
 router.post('/voice-command', async (req, res, next) => {
   try {
-    const { text, systemPrompt, noCache } = req.body;
+    const { text, context, noCache } = req.body;
     if (!text) {
       return res.status(400).json({ error: '缺少语音文本' });
     }
 
-    const promptHash = crypto.createHash('md5').update(systemPrompt || '').digest('hex').slice(0, 12);
-    const cacheKey = normalizeText(text) + '|' + promptHash;
+    const systemPrompt = buildVoiceSystemPrompt(context);
+
+    // 缓存键包含上下文指纹，不同书库状态不会误命中
+    const contextHash = crypto
+      .createHash('md5')
+      .update(systemPrompt)
+      .digest('hex')
+      .slice(0, 12);
+    const cacheKey = normalizeText(text) + '|' + contextHash;
     if (!noCache) {
       const cached = voiceCache.get(cacheKey);
       if (cached && Date.now() - cached.createdAt < CACHE_TTL) {
@@ -195,7 +242,7 @@ router.post('/voice-command', async (req, res, next) => {
     const { text: responseText, supplier } = await callWithFallback({
       kind: 'text',
       maxTokens: 1024,
-      system: systemPrompt || '',
+      system: systemPrompt,
       userText: text,
     });
 

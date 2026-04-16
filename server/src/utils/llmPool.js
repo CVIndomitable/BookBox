@@ -1,4 +1,16 @@
 import prisma from './prisma.js';
+import { decrypt } from './crypto.js';
+
+// 从持久化字段获取明文 API Key；密文会被解密，明文（历史数据）原样返回
+function readApiKey(supplier) {
+  try {
+    return decrypt(supplier.apiKey);
+  } catch (err) {
+    const e = new Error(`供应商 ${supplier.name} 的 API Key 解密失败: ${err.message}`);
+    e.httpStatus = 500;
+    throw e;
+  }
+}
 
 // 供应商必须显式填写对应 kind 的模型名；未填写视为不参与该类型调用。
 // 例如学鼎仅填 text_model，会自动从视觉池中跳过。
@@ -90,7 +102,7 @@ async function callAnthropic(supplier, { model, maxTokens, system, userText, ima
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': supplier.apiKey,
+        'x-api-key': readApiKey(supplier),
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify(body),
@@ -147,7 +159,7 @@ async function callOpenAI(supplier, { model, maxTokens, system, userText, image 
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${supplier.apiKey}`,
+        Authorization: `Bearer ${readApiKey(supplier)}`,
       },
       body: JSON.stringify(body),
       signal: controller.signal,

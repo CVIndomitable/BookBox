@@ -74,32 +74,21 @@ struct VoiceCommandResult: Codable {
     }
 }
 
-/// 书库上下文（提供给 AI 的状态信息）
-struct LibraryContext {
-    var shelves: [(name: String, bookCount: Int)]
-    var boxes: [(name: String, uid: String, bookCount: Int)]
-
-    var systemPrompt: String {
-        var parts = ["你是 BookBox 书库助手。用户通过语音管理自己的书库。"]
-        parts.append("当前书库状态：")
-
-        if !shelves.isEmpty {
-            let shelfDesc = shelves.map { "\($0.name)（\($0.bookCount)本）" }.joined(separator: "、")
-            parts.append("书架：\(shelfDesc)")
-        }
-
-        if !boxes.isEmpty {
-            let boxDesc = boxes.map { "\($0.uid) \($0.name)（\($0.bookCount)本）" }.joined(separator: "、")
-            parts.append("箱子（已归档）：\(boxDesc)")
-        }
-
-        parts.append("")
-        parts.append("请根据用户指令返回 JSON：")
-        parts.append(#"{"action": "move|query|edit|list", "bookTitle": "书名", "bookId": null, "target": {"type": "shelf|box", "name": "名称"}, "reply": "回复用户的话"}"#)
-        parts.append("只返回 JSON。")
-
-        return parts.joined(separator: "\n")
+/// 书库上下文（提供给服务器的结构化状态信息）
+/// 服务器端据此构建 system prompt，客户端不再拼接提示词以防注入
+struct LibraryContext: Codable {
+    struct Shelf: Codable {
+        var name: String
+        var bookCount: Int
     }
+    struct Box: Codable {
+        var name: String
+        var uid: String
+        var bookCount: Int
+    }
+
+    var shelves: [Shelf]
+    var boxes: [Box]
 }
 
 /// 压缩图片用于上传识别（长边不超过 1024px，JPEG quality 0.6）

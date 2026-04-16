@@ -13,14 +13,18 @@ struct MoveBookIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         do {
+            // 多书库下仅在当前书库范围内查找，避免跨库误操作
+            let stored = UserDefaults.standard.integer(forKey: "lastLibraryId")
+            let libraryId: Int? = stored > 0 ? stored : nil
+
             // 搜索书籍
-            let searchResult = try await NetworkService.shared.fetchBooks(search: bookTitle)
+            let searchResult = try await NetworkService.shared.fetchBooks(search: bookTitle, libraryId: libraryId)
             guard let book = searchResult.data.first else {
                 return .result(dialog: "没有找到《\(bookTitle)》")
             }
 
             // 先搜索书架
-            let shelves = try await NetworkService.shared.fetchShelves()
+            let shelves = try await NetworkService.shared.fetchShelves(libraryId: libraryId)
             if let shelf = shelves.first(where: { $0.name.contains(destination) }) {
                 let req = MoveBookRequest(toType: .shelf, toId: shelf.id, method: "siri", rawInput: "Siri: 移动\(bookTitle)到\(destination)")
                 _ = try await NetworkService.shared.moveBook(id: book.id, request: req)
@@ -28,7 +32,7 @@ struct MoveBookIntent: AppIntent {
             }
 
             // 再搜索箱子
-            let boxes = try await NetworkService.shared.fetchBoxes()
+            let boxes = try await NetworkService.shared.fetchBoxes(libraryId: libraryId)
             if let box = boxes.first(where: { $0.name.contains(destination) }) {
                 let req = MoveBookRequest(toType: .box, toId: box.id, method: "siri", rawInput: "Siri: 移动\(bookTitle)到\(destination)")
                 _ = try await NetworkService.shared.moveBook(id: book.id, request: req)

@@ -81,11 +81,13 @@ struct ScanEntryView: View {
                 NavigationStack {
                     PreClassifyView()
                 }
+                .withVoiceAssistant()
             }
             .fullScreenCover(isPresented: $showBoxing) {
                 NavigationStack {
                     BoxingView()
                 }
+                .withVoiceAssistant()
             }
         }
     }

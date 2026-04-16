@@ -2,20 +2,37 @@ import SwiftUI
 
 @main
 struct BookBoxApp: App {
-    @AppStorage("voiceControlEnabled") private var voiceControlEnabled = false
-
     var body: some Scene {
         WindowGroup {
             HomeView()
                 .overlay(alignment: .top) {
                     SupplierDegradationBanner()
                 }
-                .overlay(alignment: .bottomTrailing) {
-                    if voiceControlEnabled {
-                        VoiceAssistantButton()
-                            .padding()
-                    }
-                }
+                .withVoiceAssistant()
         }
+    }
+}
+
+/// 语音助手悬浮按钮修饰器
+///
+/// SwiftUI 的 `.overlay` 只会覆盖自身视图，`.fullScreenCover` 呈现的全屏模态会盖住根
+/// 视图上的 overlay，因此需要在每个可能全屏展示的场景（如扫描入口的两个 cover）内部
+/// 也应用一次此修饰器，保证悬浮按钮在任何场景都可见。
+struct VoiceAssistantOverlay: ViewModifier {
+    @AppStorage("voiceControlEnabled") private var voiceControlEnabled = false
+
+    func body(content: Content) -> some View {
+        content.overlay(alignment: .bottomTrailing) {
+            if voiceControlEnabled {
+                VoiceAssistantButton()
+                    .padding()
+            }
+        }
+    }
+}
+
+extension View {
+    func withVoiceAssistant() -> some View {
+        modifier(VoiceAssistantOverlay())
     }
 }

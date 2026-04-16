@@ -10,7 +10,8 @@ struct BookLogBook: Codable {
 /// 操作日志模型
 struct BookLog: Identifiable, Codable {
     let id: Int
-    var bookId: Int
+    // 后端在书籍被删除后将 bookId 置空（onDelete: SetNull），故为可空
+    var bookId: Int?
     var action: String
     var fromType: String?
     var fromId: Int?

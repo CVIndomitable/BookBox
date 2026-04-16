@@ -112,7 +112,12 @@ struct ShelfDetailView: View {
             Button("取消", role: .cancel) {}
             Button("删除", role: .destructive) { deleteShelf() }
         } message: {
-            Text("删除书架后，书架上的书籍不会被删除，但会变为未归位状态。")
+            let count = shelf?.bookCount ?? 0
+            if count > 0 {
+                Text("删除书架后，书架上的 \(count) 本书不会被删除，但会变为未归位状态。")
+            } else {
+                Text("删除书架后，若有书籍将变为未归位状态。")
+            }
         }
         .alert("操作失败", isPresented: Binding(
             get: { errorMessage != nil },

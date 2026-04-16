@@ -7,7 +7,10 @@ struct QueryLibraryIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         do {
-            let overview = try await NetworkService.shared.fetchLibraryOverview()
+            // 多书库下仅查当前书库
+            let stored = UserDefaults.standard.integer(forKey: "lastLibraryId")
+            let libraryId: Int? = stored > 0 ? stored : nil
+            let overview = try await NetworkService.shared.fetchLibraryOverview(libraryId: libraryId)
 
             var parts: [String] = []
             parts.append("书库共有 \(overview.totalBooks) 本书")

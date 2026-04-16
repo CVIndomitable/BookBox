@@ -57,14 +57,25 @@ router.post('/', async (req, res, next) => {
   }
 });
 
+// 分类层级最大深度上限，防止异常数据导致过度递归
+const MAX_CATEGORY_DEPTH = 50;
+
 // 检测分类循环引用（A→B→C→A）
 async function hasCycle(targetId, newParentId) {
   let current = newParentId;
   const visited = new Set();
+  let depth = 0;
   while (current) {
     if (current === targetId) return true;
     if (visited.has(current)) return false; // 已有环，但不涉及 targetId
+    if (depth >= MAX_CATEGORY_DEPTH) {
+      // 超过合理深度视为可疑结构，拒绝本次操作
+      const err = new Error(`分类层级超过上限 ${MAX_CATEGORY_DEPTH}，请检查数据`);
+      err.statusCode = 400;
+      throw err;
+    }
     visited.add(current);
+    depth++;
     const cat = await prisma.category.findUnique({ where: { id: current }, select: { parentId: true } });
     current = cat?.parentId;
   }

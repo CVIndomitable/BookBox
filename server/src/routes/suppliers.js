@@ -2,14 +2,22 @@ import { Router } from 'express';
 import prisma from '../utils/prisma.js';
 import { parseId } from '../utils/validate.js';
 import { pingSupplier, validateEndpoint } from '../utils/llmPool.js';
+import { encrypt, decrypt, isEncrypted, isEncryptionConfigured } from '../utils/crypto.js';
 
 const router = Router();
 
 // 打码 API Key，仅保留前 4 位 + 后 4 位
 function maskKey(key) {
   if (!key) return null;
-  if (key.length <= 10) return '***';
-  return `${key.slice(0, 4)}${'*'.repeat(Math.max(3, key.length - 8))}${key.slice(-4)}`;
+  // 若是密文（enc:v1:...），不暴露密文内容，统一打码
+  let plain;
+  try {
+    plain = isEncrypted(key) ? decrypt(key) : key;
+  } catch {
+    return '***';
+  }
+  if (plain.length <= 10) return '***';
+  return `${plain.slice(0, 4)}${'*'.repeat(Math.max(3, plain.length - 8))}${plain.slice(-4)}`;
 }
 
 function toClientShape(s) {
@@ -32,6 +40,16 @@ function toClientShape(s) {
     createdAt: s.createdAt,
     updatedAt: s.updatedAt,
   };
+}
+
+// 写入前加密 API Key；若未配置密钥则抛错以避免落下新的明文
+function encryptForStorage(apiKey) {
+  if (!isEncryptionConfigured()) {
+    const err = new Error('服务器未配置 SUPPLIER_ENCRYPTION_KEY，拒绝写入新的 API Key');
+    err.statusCode = 500;
+    throw err;
+  }
+  return encrypt(apiKey);
 }
 
 // 所有请求都不返回明文 API Key，供 iOS 只读展示
@@ -66,7 +84,8 @@ router.post('/', async (req, res, next) => {
 
     const created = await prisma.llmSupplier.create({
       data: {
-        name, protocol, endpoint, apiKey,
+        name, protocol, endpoint,
+        apiKey: encryptForStorage(apiKey),
         visionModel: visionModel || null,
         textModel: textModel || null,
         priority: Number(priority),
@@ -77,6 +96,7 @@ router.post('/', async (req, res, next) => {
     });
     res.status(201).json(toClientShape(created));
   } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     next(err);
   }
 });
@@ -96,7 +116,7 @@ router.put('/:id', async (req, res, next) => {
       }
       data.endpoint = body.endpoint;
     }
-    if (body.apiKey !== undefined && body.apiKey) data.apiKey = body.apiKey;
+    if (body.apiKey !== undefined && body.apiKey) data.apiKey = encryptForStorage(body.apiKey);
     if (body.visionModel !== undefined) data.visionModel = body.visionModel || null;
     if (body.textModel !== undefined) data.textModel = body.textModel || null;
     if (body.priority !== undefined) data.priority = Number(body.priority);
@@ -107,6 +127,7 @@ router.put('/:id', async (req, res, next) => {
     const updated = await prisma.llmSupplier.update({ where: { id }, data });
     res.json(toClientShape(updated));
   } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     next(err);
   }
 });

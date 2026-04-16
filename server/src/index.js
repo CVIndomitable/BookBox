@@ -25,17 +25,36 @@ if (!process.env.DATABASE_URL) {
 if (!process.env.API_TOKEN) {
   console.warn('⚠ 警告：API_TOKEN 未配置，所有认证请求将被拒绝');
 }
+if (!process.env.SUPPLIER_ENCRYPTION_KEY) {
+  console.warn('⚠ 警告：SUPPLIER_ENCRYPTION_KEY 未配置，供应商 API Key 将无法加密/解密');
+  console.warn('   生成方式：node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // 基础中间件
+// CORS：默认只允许同源与 iOS 原生客户端（均无 Origin 头）；
+// 浏览器等跨域来源必须通过 CORS_ORIGIN 显式白名单启用（逗号分隔，* 表示放开）
+const allowedOrigins = (process.env.CORS_ORIGIN || '')
+  .split(',').map((s) => s.trim()).filter(Boolean);
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true); // 同源 / 原生客户端无 Origin
+    if (allowedOrigins.includes('*')) return cb(null, true);
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error(`跨域来源不被允许: ${origin}`));
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
-app.use(express.json({ limit: '20mb' }));
+
+// 请求体大小限制：
+// - 默认 1MB 足够承载结构化 JSON；
+// - /api/llm/recognize 单独放到 10MB，用于承载 base64 图片（压缩后约 500KB–2MB 为常态，上限留足）。
+// 先注册具体路径的大上限解析器，再注册全局；首个解析成功后 express.json 的后续调用是 no-op。
+app.use('/api/llm/recognize', express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '1mb' }));
 
 // 全局速率限制
 const apiLimiter = rateLimit({

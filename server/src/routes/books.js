@@ -1,8 +1,12 @@
 import { Router } from 'express';
 import prisma from '../utils/prisma.js';
 import { parseId, parseOptionalId, parsePagination, paginationResponse } from '../utils/validate.js';
+import { verifyBook } from '../services/search/bookVerifier.js';
 
 const router = Router();
+
+// 合法的地区模式
+const VALID_REGIONS = ['mainland', 'overseas'];
 
 // 合法的位置类型
 const VALID_LOCATION_TYPES = ['none', 'shelf', 'box'];
@@ -30,18 +34,20 @@ async function updateContainerCount(tx, type, id) {
 }
 
 // 校验位置是否存在
-async function validateLocation(locationType, locationId) {
+// 强烈建议传入 tx（事务客户端），避免「校验后但写入前目标被删」的 TOCTOU
+// 窗口；在 Serializable 隔离级别下若并发删除会导致事务冲突，由调用方捕获
+async function validateLocation(client, locationType, locationId) {
   if (!locationType || locationType === 'none' || !locationId) return;
   validateLocationType(locationType);
   if (locationType === 'shelf') {
-    const shelf = await prisma.shelf.findUnique({ where: { id: locationId } });
+    const shelf = await client.shelf.findUnique({ where: { id: locationId } });
     if (!shelf) {
       const err = new Error('目标书架不存在');
       err.statusCode = 404;
       throw err;
     }
   } else if (locationType === 'box') {
-    const box = await prisma.box.findUnique({ where: { id: locationId } });
+    const box = await client.box.findUnique({ where: { id: locationId } });
     if (!box) {
       const err = new Error('目标箱子不存在');
       err.statusCode = 404;
@@ -132,15 +138,17 @@ router.post('/', async (req, res, next) => {
     validateLocationType(finalLocationType);
     const finalLocationId = parseOptionalId(locationId);
 
-    // 位置类型非 none 时必须提供 locationId，且验证目标存在
-    if (finalLocationType !== 'none') {
-      if (!finalLocationId) {
-        return res.status(400).json({ error: '指定位置类型时必须提供位置 ID' });
-      }
-      await validateLocation(finalLocationType, finalLocationId);
+    // 位置类型非 none 时必须提供 locationId
+    if (finalLocationType !== 'none' && !finalLocationId) {
+      return res.status(400).json({ error: '指定位置类型时必须提供位置 ID' });
     }
 
     const book = await prisma.$transaction(async (tx) => {
+      // 事务内校验目标存在，防止校验后、写入前目标被并发删除
+      if (finalLocationType !== 'none') {
+        await validateLocation(tx, finalLocationType, finalLocationId);
+      }
+
       const created = await tx.book.create({
         data: {
           title,
@@ -184,6 +192,22 @@ router.post('/', async (req, res, next) => {
   }
 });
 
+// 书籍联网校验（豆瓣/Google Books/Open Library）
+// 必须声明在 /:id 之前，避免被通配路由捕获
+router.post('/verify', async (req, res, next) => {
+  try {
+    const { title, region = 'mainland' } = req.body || {};
+    if (!title || typeof title !== 'string') {
+      return res.status(400).json({ error: '请提供书名' });
+    }
+    const normalized = VALID_REGIONS.includes(region) ? region : 'mainland';
+    const result = await verifyBook(title, normalized);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // 批量新增书籍
 router.post('/batch', async (req, res, next) => {
   try {
@@ -198,13 +222,13 @@ router.post('/batch', async (req, res, next) => {
     validateLocationType(finalLocationType);
     const finalLocationId = parseOptionalId(locationId) || parseOptionalId(boxId);
 
-    // 验证目标位置存在
-    if (finalLocationType !== 'none' && finalLocationId) {
-      await validateLocation(finalLocationType, finalLocationId);
-    }
-
     const skipped = [];
     const results = await prisma.$transaction(async (tx) => {
+      // 事务内校验目标存在
+      if (finalLocationType !== 'none' && finalLocationId) {
+        await validateLocation(tx, finalLocationType, finalLocationId);
+      }
+
       const created = [];
 
       for (let i = 0; i < books.length; i++) {
@@ -332,16 +356,16 @@ router.put('/:id', async (req, res, next) => {
         return res.status(400).json({ error: '指定位置类型时必须提供位置 ID' });
       }
 
-      // 验证目标位置存在
-      if (newLocationType !== 'none' && newLocationId) {
-        await validateLocation(newLocationType, newLocationId);
-      }
-
       data.locationType = newLocationType;
       data.locationId = newLocationId;
     }
 
     const book = await prisma.$transaction(async (tx) => {
+      // 事务内校验目标位置存在
+      if (isMoving && data.locationType !== 'none' && data.locationId) {
+        await validateLocation(tx, data.locationType, data.locationId);
+      }
+
       const updated = await tx.book.update({ where: { id }, data });
 
       if (isMoving) {
@@ -458,10 +482,10 @@ router.post('/:id/move', async (req, res, next) => {
       return res.status(400).json({ error: '指定位置类型时必须提供位置 ID' });
     }
 
-    // 验证目标存在
-    await validateLocation(toType, targetId);
-
     await prisma.$transaction(async (tx) => {
+      // 事务内校验目标存在，防止校验后、写入前目标被删
+      await validateLocation(tx, toType, targetId);
+
       // 更新书的位置
       await tx.book.update({
         where: { id },

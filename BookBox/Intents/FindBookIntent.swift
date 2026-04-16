@@ -10,7 +10,11 @@ struct FindBookIntent: AppIntent {
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         do {
-            let result = try await NetworkService.shared.fetchBooks(pageSize: 5, search: bookTitle)
+            // 多书库下仅查当前书库
+            let stored = UserDefaults.standard.integer(forKey: "lastLibraryId")
+            let libraryId: Int? = stored > 0 ? stored : nil
+
+            let result = try await NetworkService.shared.fetchBooks(pageSize: 5, search: bookTitle, libraryId: libraryId)
             let books = result.data
 
             guard !books.isEmpty else {
@@ -18,8 +22,8 @@ struct FindBookIntent: AppIntent {
             }
 
             // 一次性拉取书架和箱子,避免 N+1
-            async let shelvesTask = NetworkService.shared.fetchShelves()
-            async let boxesTask = NetworkService.shared.fetchBoxes()
+            async let shelvesTask = NetworkService.shared.fetchShelves(libraryId: libraryId)
+            async let boxesTask = NetworkService.shared.fetchBoxes(libraryId: libraryId)
             let shelves = (try? await shelvesTask) ?? []
             let boxes = (try? await boxesTask) ?? []
 

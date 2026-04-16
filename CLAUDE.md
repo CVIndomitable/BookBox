@@ -101,7 +101,7 @@ bookbox/
     │       ├── BookRow.swift             # 书籍列表行组件
     │       └── VoiceAssistantButton.swift # 全局语音悬浮按钮
     ├── Services/
-    │   ├── MiMoService.swift        # AI 识别数据模型（RecognizedBook、VoiceCommandResult 等）
+    │   ├── AIModels.swift           # AI 识别与语音指令的数据模型（RecognizedBook、VoiceCommandResult、LibraryContext 等）
     │   ├── SpeechService.swift      # 语音识别服务
     │   ├── NetworkService.swift     # 网络请求层（硬编码地址）
     │   ├── OCRService.swift         # Vision OCR（回退方案）
@@ -284,7 +284,7 @@ OCR 回退模式：联网校验 → 三色
 4. ✅ 硬编码服务器地址
 
 ### Phase V2-C：多模态识别 ✅ 已完成
-1. ✅ 新建 MiMoService.swift（数据模型）
+1. ✅ 新建 AIModels.swift（数据模型）
 2. ✅ 修改拍照流程（服务器 AI + OCR 回退）
 3. ✅ 设置页简化为 AI 配置
 4. ✅ LLM 调用移至服务器端（llm.js），iOS 端不再直接调 AI API

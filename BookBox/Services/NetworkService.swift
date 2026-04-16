@@ -387,10 +387,6 @@ final class NetworkService: ObservableObject {
         struct CreateRequest: Codable {
             let name: String
             let parentId: Int?
-            enum CodingKeys: String, CodingKey {
-                case name
-                case parentId = "parent_id"
-            }
         }
         return try await request("POST", path: "/categories", body: CreateRequest(name: name, parentId: parentId))
     }
@@ -427,9 +423,10 @@ final class NetworkService: ObservableObject {
     }
 
     /// 通过服务器端 AI 解析语音指令
-    func processVoiceCommand(text: String, systemPrompt: String) async throws -> VoiceCommandResult {
-        struct Req: Codable { let text: String; let systemPrompt: String }
-        let result: VoiceCommandResult = try await request("POST", path: "/llm/voice-command", body: Req(text: text, systemPrompt: systemPrompt), timeout: 60)
+    /// 仅传结构化上下文；system prompt 由服务器端构建，防止提示注入
+    func processVoiceCommand(text: String, context: LibraryContext) async throws -> VoiceCommandResult {
+        struct Req: Codable { let text: String; let context: LibraryContext }
+        let result: VoiceCommandResult = try await request("POST", path: "/llm/voice-command", body: Req(text: text, context: context), timeout: 60)
         SupplierStatusStore.shared.record(result.supplier)
         return result
     }
