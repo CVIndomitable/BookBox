@@ -5,6 +5,7 @@ struct ScanResultView: View {
     @Binding var results: [ScanResultItem]
     let locationType: LocationType
     let locationId: Int?
+    var onSaved: (() -> Void)? = nil
     @State private var editingItem: ScanResultItem?
     @State private var isSaving = false
     @State private var showSaveSuccess = false
@@ -43,6 +44,7 @@ struct ScanResultView: View {
         .alert("保存成功", isPresented: $showSaveSuccess) {
             Button("确定") {
                 results.removeAll()
+                onSaved?()
             }
         } message: {
             Text("已将 \(selectedCount) 本书录入\(locationType == .shelf ? "书架" : "箱子")")

@@ -10,6 +10,7 @@ struct ShelfDetailView: View {
     @State private var errorMessage: String?
     @State private var showEdit = false
     @State private var showDeleteConfirm = false
+    @State private var showAddBooks = false
     @State private var editName = ""
     @State private var editLocation = ""
     @State private var editDescription = ""
@@ -64,6 +65,15 @@ struct ShelfDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showAddBooks = true
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title3)
+                }
+                .disabled(shelf == nil)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button {
                         editName = shelf?.name ?? shelfName
@@ -85,6 +95,16 @@ struct ShelfDetailView: View {
         }
         .task { await loadDetail() }
         .refreshable { await loadDetail() }
+        .sheet(isPresented: $showAddBooks) {
+            ShelfAddBooksSheet(
+                shelfId: shelfId,
+                shelfName: shelf?.name ?? shelfName,
+                libraryId: shelf?.libraryId,
+                onCompleted: {
+                    Task { await loadDetail() }
+                }
+            )
+        }
         .sheet(isPresented: $showEdit) {
             NavigationStack {
                 Form {
