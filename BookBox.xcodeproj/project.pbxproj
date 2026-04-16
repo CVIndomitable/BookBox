@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		007AFB637DC8CFA61A24BC23 /* LogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8147BAB8714F18FF5A253A8D /* LogsView.swift */; };
+		076267F260B8D10AB080C00B /* FindBookIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A63346701C62586F6AA3F3B /* FindBookIntent.swift */; };
 		0ACAB1E6409E5BB131899F6D /* Box.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C521194F6F1CD605D154F84 /* Box.swift */; };
 		11CBC4F2609828127402EADF /* OCRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17DADC7179D9ECB375C20145 /* OCRService.swift */; };
 		16FA5ED259602EA726D33165 /* BookRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81F13D92E33A90BA5207F989 /* BookRow.swift */; };
@@ -78,6 +79,7 @@
 		646125A715F5C0D2292DB19B /* ScanHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanHistoryView.swift; sourceTree = "<group>"; };
 		78FA87A915B0810A2881A72F /* NetworkService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkService.swift; sourceTree = "<group>"; };
 		7A451D035B7CAC217132B53B /* LibraryCreateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryCreateView.swift; sourceTree = "<group>"; };
+		7A63346701C62586F6AA3F3B /* FindBookIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FindBookIntent.swift; sourceTree = "<group>"; };
 		7F974B2C3A63B22FB476C4D4 /* ClassifyResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClassifyResultView.swift; sourceTree = "<group>"; };
 		809989F692AA5B4FB6C2E143 /* QueryLibraryIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueryLibraryIntent.swift; sourceTree = "<group>"; };
 		80CE352C7DF2FB4CE8C0890D /* LlmSupplier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LlmSupplier.swift; sourceTree = "<group>"; };
@@ -177,6 +179,7 @@
 			children = (
 				184D6A0C09A2392CA0FB8B8D /* BookBoxShortcuts.swift */,
 				D765D80C715B5CB12C1DC4B1 /* CreateShelfIntent.swift */,
+				7A63346701C62586F6AA3F3B /* FindBookIntent.swift */,
 				F8B214D41FFCC391ADF9B7AA /* MoveBookIntent.swift */,
 				809989F692AA5B4FB6C2E143 /* QueryLibraryIntent.swift */,
 			);
@@ -338,6 +341,7 @@
 				64FB639B699628696950F890 /* ClassifyResultView.swift in Sources */,
 				7FD31548D01A945135911F26 /* CreateShelfIntent.swift in Sources */,
 				9221B66D2436B3C13D20B88E /* Error+Chinese.swift in Sources */,
+				076267F260B8D10AB080C00B /* FindBookIntent.swift in Sources */,
 				99A347BFEF4220B86B83B2C9 /* HomeView.swift in Sources */,
 				18D88080043FF556F1F445C7 /* Library.swift in Sources */,
 				7D07014CF5F48D42D3F8D35E /* LibraryCreateView.swift in Sources */,

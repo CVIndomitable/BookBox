@@ -22,6 +22,16 @@ struct BookBoxShortcuts: AppShortcutsProvider {
             systemImageName: "books.vertical"
         )
         AppShortcut(
+            intent: FindBookIntent(),
+            phrases: [
+                "在\(.applicationName)找书",
+                "\(.applicationName)查找书籍",
+                "\(.applicationName)这本书在哪",
+            ],
+            shortTitle: "查找书籍",
+            systemImageName: "magnifyingglass"
+        )
+        AppShortcut(
             intent: CreateShelfIntent(),
             phrases: [
                 "在\(.applicationName)新建书架",
