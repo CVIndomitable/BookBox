@@ -71,6 +71,9 @@ async function callAnthropic(supplier, { model, maxTokens, system, userText, ima
     model,
     max_tokens: maxTokens,
     messages: [{ role: 'user', content }],
+    // 关闭扩展思考：mimo-v2-omni 等推理模型默认会先输出 thinking 块，
+    // 容易吃光 max_tokens 导致正文为空。此接口直出 JSON 不需要推理过程。
+    thinking: { type: 'disabled' },
   };
   if (system) body.system = system;
 
@@ -94,7 +97,9 @@ async function callAnthropic(supplier, { model, maxTokens, system, userText, ima
       throw err;
     }
     const data = await res.json();
-    return data?.content?.[0]?.text || '';
+    // content 数组可能包含 thinking / text 等多种块，拼接所有 text 块
+    const blocks = Array.isArray(data?.content) ? data.content : [];
+    return blocks.filter(b => b?.type === 'text').map(b => b.text || '').join('');
   } catch (err) {
     if (err.name === 'AbortError') {
       const e = new Error('请求超时');
