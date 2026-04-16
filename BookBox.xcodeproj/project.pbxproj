@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		007AFB637DC8CFA61A24BC23 /* LogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8147BAB8714F18FF5A253A8D /* LogsView.swift */; };
 		076267F260B8D10AB080C00B /* FindBookIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A63346701C62586F6AA3F3B /* FindBookIntent.swift */; };
+		0A11986FFF9905C1914C1A09 /* ShelfAddBooksSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29E808E11FA34400AFA6AD47 /* ShelfAddBooksSheet.swift */; };
 		0ACAB1E6409E5BB131899F6D /* Box.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C521194F6F1CD605D154F84 /* Box.swift */; };
 		110393060CAE1D7D651DA973 /* RoomDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CFB9CC6A3C89D8076633971 /* RoomDetailView.swift */; };
 		11CBC4F2609828127402EADF /* OCRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17DADC7179D9ECB375C20145 /* OCRService.swift */; };
@@ -17,10 +18,10 @@
 		18D88080043FF556F1F445C7 /* Library.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0209C1774CD42652B4013A96 /* Library.swift */; };
 		21BAE2DC0D9ED0F261E35397 /* LlmSupplier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80CE352C7DF2FB4CE8C0890D /* LlmSupplier.swift */; };
 		27C77C2F9245CB86B9C448CD /* CategoryManageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF16AD18B23ACDEF1EC0E3F8 /* CategoryManageView.swift */; };
+		2D07F99E8B35E9CA952165D3 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F2317C0236D5B7A3E34BF975 /* Assets.xcassets */; };
 		2D63E050D5EC7382CE28045C /* Room.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F466B1B1B4AF472E8C3FC9E /* Room.swift */; };
 		2DB7234907419E6DBAAA9883 /* BookDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60602FEFCC9F6157C9178732 /* BookDetailView.swift */; };
 		2E9EE63C3321BD31493E634A /* ShelfDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B181C522B728023396F7B8C1 /* ShelfDetailView.swift */; };
-		A5E7F2B91C4D68A7039B4C11 /* ShelfAddBooksSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D94B1FA0683E5C27A18FB6E2 /* ShelfAddBooksSheet.swift */; };
 		3B84DFAFC0AB61ACC81A4160 /* BookLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8DAAB00E696C7DA8769C3CD /* BookLog.swift */; };
 		3C08B6FF967376110021F01F /* BoxDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5610B6F8ACC0DB6F46981C6B /* BoxDetailView.swift */; };
 		40667AFF79A0CA2AAC108852 /* ScanHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 646125A715F5C0D2292DB19B /* ScanHistoryView.swift */; };
@@ -67,6 +68,7 @@
 		184D6A0C09A2392CA0FB8B8D /* BookBoxShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookBoxShortcuts.swift; sourceTree = "<group>"; };
 		1D96B699D9DACDB0EFA4D631 /* MoveBookSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoveBookSheet.swift; sourceTree = "<group>"; };
 		1FDA7E4FFE7CA550994B0241 /* Error+Chinese.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Error+Chinese.swift"; sourceTree = "<group>"; };
+		29E808E11FA34400AFA6AD47 /* ShelfAddBooksSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShelfAddBooksSheet.swift; sourceTree = "<group>"; };
 		330505216BFB18DF280898F3 /* LocalMLService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalMLService.swift; sourceTree = "<group>"; };
 		37EE56E29F96C5D1E3C3D93C /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
 		3B6FC45C2988B0E0BB6F7CA1 /* LibraryOverview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryOverview.swift; sourceTree = "<group>"; };
@@ -102,7 +104,6 @@
 		AF16AD18B23ACDEF1EC0E3F8 /* CategoryManageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryManageView.swift; sourceTree = "<group>"; };
 		AFFCF14F8C425F44F81BFC96 /* BookBoxApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookBoxApp.swift; sourceTree = "<group>"; };
 		B181C522B728023396F7B8C1 /* ShelfDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShelfDetailView.swift; sourceTree = "<group>"; };
-		D94B1FA0683E5C27A18FB6E2 /* ShelfAddBooksSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShelfAddBooksSheet.swift; sourceTree = "<group>"; };
 		B3721DEDB6399B8C4D5CC78B /* ShelfCreateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShelfCreateView.swift; sourceTree = "<group>"; };
 		B9ED1B15767CC2B301085746 /* ScanResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanResultView.swift; sourceTree = "<group>"; };
 		C381F9DFE68BA730035368BE /* Category.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Category.swift; sourceTree = "<group>"; };
@@ -115,6 +116,7 @@
 		E70942CF579F6AED33899A72 /* PreClassifyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreClassifyView.swift; sourceTree = "<group>"; };
 		EED0CB6242E5F30975885FE8 /* RoomCreateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomCreateView.swift; sourceTree = "<group>"; };
 		F1BC538AB120A3BB8093B3C9 /* Book.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Book.swift; sourceTree = "<group>"; };
+		F2317C0236D5B7A3E34BF975 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		F8B214D41FFCC391ADF9B7AA /* MoveBookIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoveBookIntent.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -234,6 +236,7 @@
 				D76C43F7E1EE789C127865FE /* App */,
 				869690DBD1020C80834AE64C /* Intents */,
 				1E86B6930CA8D30873C43496 /* Models */,
+				EA157B4F2C53510FC221F5D8 /* Resources */,
 				3F0ABD45462235B6D1AD55F8 /* Services */,
 				A85D9BED3533081DA34AA078 /* Views */,
 			);
@@ -256,6 +259,14 @@
 			path = App;
 			sourceTree = "<group>";
 		};
+		EA157B4F2C53510FC221F5D8 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				F2317C0236D5B7A3E34BF975 /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		F2CA0C73368B322DC0C558B1 /* Library */ = {
 			isa = PBXGroup;
 			children = (
@@ -268,7 +279,7 @@
 				EED0CB6242E5F30975885FE8 /* RoomCreateView.swift */,
 				3CFB9CC6A3C89D8076633971 /* RoomDetailView.swift */,
 				646125A715F5C0D2292DB19B /* ScanHistoryView.swift */,
-				D94B1FA0683E5C27A18FB6E2 /* ShelfAddBooksSheet.swift */,
+				29E808E11FA34400AFA6AD47 /* ShelfAddBooksSheet.swift */,
 				B3721DEDB6399B8C4D5CC78B /* ShelfCreateView.swift */,
 				B181C522B728023396F7B8C1 /* ShelfDetailView.swift */,
 			);
@@ -283,6 +294,7 @@
 			buildConfigurationList = 6022901276F33EE6EA2BBD5C /* Build configuration list for PBXNativeTarget "BookBox" */;
 			buildPhases = (
 				80D2A8914491A2F3A94721C7 /* Sources */,
+				5E05D90DF9F17EC4BF6C899C /* Resources */,
 			);
 			buildRules = (
 			);
@@ -327,6 +339,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		5E05D90DF9F17EC4BF6C899C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2D07F99E8B35E9CA952165D3 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		80D2A8914491A2F3A94721C7 /* Sources */ = {
@@ -377,7 +400,7 @@
 				D0CFBA828DB54D4B93EF9C97 /* ScanResultView.swift in Sources */,
 				7CA46098643B8355F9407270 /* SettingsView.swift in Sources */,
 				F1BA891B3E320586C0DAB2A8 /* Shelf.swift in Sources */,
-				A5E7F2B91C4D68A7039B4C11 /* ShelfAddBooksSheet.swift in Sources */,
+				0A11986FFF9905C1914C1A09 /* ShelfAddBooksSheet.swift in Sources */,
 				6992D2F3594A94BD6AAE78E8 /* ShelfCreateView.swift in Sources */,
 				2E9EE63C3321BD31493E634A /* ShelfDetailView.swift in Sources */,
 				58BF1856E10ABE7D89DFCD3C /* SpeechService.swift in Sources */,

@@ -15,10 +15,6 @@ targets:
     platform: iOS
     sources:
       - path: BookBox
-        excludes:
-          - "Resources/**"
-    resources:
-      - path: BookBox/Resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.bookbox.app
