@@ -1,13 +1,17 @@
 import AppIntents
 
 /// 注册 Siri 快捷短语
+///
+/// 短语里的 `\(.applicationName)` 是 Apple 强制要求的占位符，
+/// 会被替换为 App 的本地化显示名。中文系统下显示名通过
+/// zh-Hans.lproj/InfoPlist.strings 本地化为"书库"。
 struct BookBoxShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
             intent: MoveBookIntent(),
             phrases: [
-                "在书库移动书籍",
-                "书库移动书",
+                "在\(.applicationName)移动书籍",
+                "\(.applicationName)移动书",
             ],
             shortTitle: "移动书籍",
             systemImageName: "arrow.right.circle"
@@ -15,8 +19,8 @@ struct BookBoxShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: QueryLibraryIntent(),
             phrases: [
-                "查看书库",
-                "书库有多少书",
+                "查看\(.applicationName)",
+                "\(.applicationName)有多少书",
             ],
             shortTitle: "查询书库",
             systemImageName: "books.vertical"
@@ -24,9 +28,9 @@ struct BookBoxShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: FindBookIntent(),
             phrases: [
-                "在书库找书",
-                "书库查找书籍",
-                "书库这本书在哪",
+                "在\(.applicationName)找书",
+                "\(.applicationName)查找书籍",
+                "\(.applicationName)这本书在哪",
             ],
             shortTitle: "查找书籍",
             systemImageName: "magnifyingglass"
@@ -34,8 +38,8 @@ struct BookBoxShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: CreateShelfIntent(),
             phrases: [
-                "在书库新建书架",
-                "书库创建书架",
+                "在\(.applicationName)新建书架",
+                "\(.applicationName)创建书架",
             ],
             shortTitle: "新建书架",
             systemImageName: "plus.rectangle.on.rectangle"

@@ -29,7 +29,7 @@ targets:
     info:
       path: BookBox/Info.plist
       properties:
-        CFBundleDisplayName: "BookBox"
+        CFBundleDisplayName: "书库"
         LSApplicationCategoryType: "public.app-category.utilities"
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
