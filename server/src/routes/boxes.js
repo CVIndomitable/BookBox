@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import prisma from '../utils/prisma.js';
-import { parseId, parsePagination, paginationResponse } from '../utils/validate.js';
+import { parseId, parsePagination, paginationResponse, resolveContainerPlacement } from '../utils/validate.js';
 
 const router = Router();
 
@@ -12,12 +12,15 @@ async function updateBoxCount(tx, boxId) {
   await tx.box.update({ where: { id: boxId }, data: { bookCount: count } });
 }
 
-// 获取所有箱子列表（支持按书库筛选）
+// 获取所有箱子列表（支持按书库/房间筛选）
 router.get('/', async (req, res, next) => {
   try {
     const where = {};
     if (req.query.libraryId) {
       where.libraryId = parseId(req.query.libraryId, '书库 ID');
+    }
+    if (req.query.roomId) {
+      where.roomId = parseId(req.query.roomId, '房间 ID');
     }
 
     const boxes = await prisma.box.findMany({
@@ -34,11 +37,14 @@ router.get('/', async (req, res, next) => {
 // 新建箱子（在事务内生成编号，避免竞态）
 router.post('/', async (req, res, next) => {
   try {
-    const { name, description, libraryId } = req.body;
+    const { name, description, libraryId, roomId } = req.body;
 
     if (!name) {
       return res.status(400).json({ error: '箱子名称不能为空' });
     }
+
+    // 先解析归属（事务外校验，避免 serializable 重试浪费 LLM 代价类资源）
+    const placement = await resolveContainerPlacement(prisma, { libraryId, roomId });
 
     // 使用 Serializable 隔离级别防止并发生成重复 box_uid
     const box = await prisma.$transaction(async (tx) => {
@@ -59,16 +65,14 @@ router.post('/', async (req, res, next) => {
 
       const boxUid = `${prefix}${String(seq).padStart(3, '0')}`;
 
-      const data = { boxUid, name, description };
-      if (libraryId) {
-        data.libraryId = parseId(libraryId, '书库 ID');
-      }
-
-      return tx.box.create({ data });
+      return tx.box.create({
+        data: { boxUid, name, description, ...placement },
+      });
     }, { isolationLevel: 'Serializable' });
 
     res.status(201).json(box);
   } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     if (err.code === 'P2002') {
       return res.status(409).json({ error: '箱子编号冲突，请重试' });
     }
@@ -112,19 +116,25 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-// 更新箱子信息
+// 更新箱子信息（支持搬动：roomId/libraryId 任一传入会重新计算归属）
 router.put('/:id', async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '箱子 ID');
-    const { name, description } = req.body;
+    const { name, description, libraryId, roomId } = req.body;
 
-    const box = await prisma.box.update({
-      where: { id },
-      data: {
-        ...(name !== undefined && { name }),
-        ...(description !== undefined && { description }),
-      },
-    });
+    const data = {};
+    if (name !== undefined) data.name = name;
+    if (description !== undefined) data.description = description;
+
+    const hasRoom = Object.prototype.hasOwnProperty.call(req.body, 'roomId');
+    const hasLib = Object.prototype.hasOwnProperty.call(req.body, 'libraryId');
+    if (hasRoom || hasLib) {
+      const placement = await resolveContainerPlacement(prisma, { libraryId, roomId });
+      data.libraryId = placement.libraryId;
+      data.roomId = placement.roomId;
+    }
+
+    const box = await prisma.box.update({ where: { id }, data });
 
     res.json(box);
   } catch (err) {

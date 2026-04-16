@@ -156,9 +156,15 @@ struct VoiceAssistantButton: View {
                 let libraryId: Int? = lastLibraryId > 0 ? lastLibraryId : nil
                 let overview = try await NetworkService.shared.fetchLibraryOverview(libraryId: libraryId)
 
+                // 构建房间名索引，供书架/箱子附带房间信息
+                let roomName: (Int?) -> String? = { rid in
+                    guard let rid, let rooms = overview.rooms else { return nil }
+                    return rooms.first(where: { $0.id == rid })?.name
+                }
                 let context = LibraryContext(
-                    shelves: overview.shelves.map { .init(name: $0.name, bookCount: $0.bookCount) },
-                    boxes: overview.boxes.map { .init(name: $0.name, uid: $0.boxUid, bookCount: $0.bookCount) }
+                    rooms: overview.rooms?.map { .init(name: $0.name) },
+                    shelves: overview.shelves.map { .init(name: $0.name, bookCount: $0.bookCount, roomName: roomName($0.roomId)) },
+                    boxes: overview.boxes.map { .init(name: $0.name, uid: $0.boxUid, bookCount: $0.bookCount, roomName: roomName($0.roomId)) }
                 )
 
                 let result = try await NetworkService.shared.processVoiceCommand(text: text, context: context)

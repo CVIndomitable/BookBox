@@ -77,16 +77,22 @@ struct VoiceCommandResult: Codable {
 /// 书库上下文（提供给服务器的结构化状态信息）
 /// 服务器端据此构建 system prompt，客户端不再拼接提示词以防注入
 struct LibraryContext: Codable {
+    struct Room: Codable {
+        var name: String
+    }
     struct Shelf: Codable {
         var name: String
         var bookCount: Int
+        var roomName: String?
     }
     struct Box: Codable {
         var name: String
         var uid: String
         var bookCount: Int
+        var roomName: String?
     }
 
+    var rooms: [Room]?
     var shelves: [Shelf]
     var boxes: [Box]
 }

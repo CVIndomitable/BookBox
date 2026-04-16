@@ -11,9 +11,16 @@ router.get('/overview', async (req, res, next) => {
     const bookWhere = libraryId ? { libraryId } : {};
     const containerWhere = libraryId ? { libraryId } : {};
 
-    const [totalBooks, unlocated, shelves, boxes] = await Promise.all([
+    const [totalBooks, unlocated, rooms, shelves, boxes] = await Promise.all([
       prisma.book.count({ where: bookWhere }),
       prisma.book.count({ where: { ...bookWhere, locationType: 'none' } }),
+      libraryId
+        ? prisma.room.findMany({
+            where: { libraryId },
+            select: { id: true, name: true, isDefault: true, description: true },
+            orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+          })
+        : Promise.resolve([]),
       prisma.shelf.findMany({
         where: containerWhere,
         select: {
@@ -21,6 +28,7 @@ router.get('/overview', async (req, res, next) => {
           name: true,
           location: true,
           bookCount: true,
+          roomId: true,
         },
         orderBy: { createdAt: 'desc' },
       }),
@@ -31,12 +39,13 @@ router.get('/overview', async (req, res, next) => {
           boxUid: true,
           name: true,
           bookCount: true,
+          roomId: true,
         },
         orderBy: { createdAt: 'desc' },
       }),
     ]);
 
-    res.json({ totalBooks, unlocated, shelves, boxes });
+    res.json({ totalBooks, unlocated, rooms, shelves, boxes });
   } catch (err) {
     next(err);
   }

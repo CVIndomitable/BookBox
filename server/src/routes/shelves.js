@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import prisma from '../utils/prisma.js';
-import { parseId, parsePagination, paginationResponse } from '../utils/validate.js';
+import { parseId, parsePagination, paginationResponse, resolveContainerPlacement } from '../utils/validate.js';
 
 const router = Router();
 
@@ -12,12 +12,15 @@ async function updateShelfCount(tx, shelfId) {
   await tx.shelf.update({ where: { id: shelfId }, data: { bookCount: count } });
 }
 
-// 获取所有书架列表（支持按书库筛选）
+// 获取所有书架列表（支持按书库/房间筛选）
 router.get('/', async (req, res, next) => {
   try {
     const where = {};
     if (req.query.libraryId) {
       where.libraryId = parseId(req.query.libraryId, '书库 ID');
+    }
+    if (req.query.roomId) {
+      where.roomId = parseId(req.query.roomId, '房间 ID');
     }
 
     const shelves = await prisma.shelf.findMany({
@@ -31,21 +34,20 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-// 新建书架
+// 新建书架（libraryId 与 roomId 保持一致；只传 libraryId 时自动选默认房间）
 router.post('/', async (req, res, next) => {
   try {
-    const { name, location, description, libraryId } = req.body;
+    const { name, location, description, libraryId, roomId } = req.body;
 
     if (!name) {
       return res.status(400).json({ error: '书架名称不能为空' });
     }
 
-    const data = { name, location, description };
-    if (libraryId) {
-      data.libraryId = parseId(libraryId, '书库 ID');
-    }
+    const placement = await resolveContainerPlacement(prisma, { libraryId, roomId });
 
-    const shelf = await prisma.shelf.create({ data });
+    const shelf = await prisma.shelf.create({
+      data: { name, location, description, ...placement },
+    });
 
     res.status(201).json(shelf);
   } catch (err) {
@@ -90,21 +92,27 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-// 更新书架信息
+// 更新书架信息（支持搬动：roomId 或 libraryId 任一传入都会重新计算归属）
 router.put('/:id', async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书架 ID');
-    const { name, location, description } = req.body;
+    const { name, location, description, libraryId, roomId } = req.body;
 
     const data = {};
     if (name !== undefined) data.name = name;
     if (location !== undefined) data.location = location;
     if (description !== undefined) data.description = description;
 
-    const shelf = await prisma.shelf.update({
-      where: { id },
-      data,
-    });
+    // 搬动：roomId / libraryId 出现在 body 中（允许 null 表示脱离）
+    const hasRoom = Object.prototype.hasOwnProperty.call(req.body, 'roomId');
+    const hasLib = Object.prototype.hasOwnProperty.call(req.body, 'libraryId');
+    if (hasRoom || hasLib) {
+      const placement = await resolveContainerPlacement(prisma, { libraryId, roomId });
+      data.libraryId = placement.libraryId;
+      data.roomId = placement.roomId;
+    }
+
+    const shelf = await prisma.shelf.update({ where: { id }, data });
 
     res.json(shelf);
   } catch (err) {

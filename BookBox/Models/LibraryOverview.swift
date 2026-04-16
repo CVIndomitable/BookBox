@@ -4,6 +4,7 @@ import Foundation
 struct LibraryOverview: Codable {
     let totalBooks: Int
     let unlocated: Int
+    let rooms: [RoomSummary]?
     let shelves: [ShelfSummary]
     let boxes: [BoxSummary]
 }
@@ -14,6 +15,7 @@ struct ShelfSummary: Identifiable, Codable, Hashable {
     let name: String
     let location: String?
     let bookCount: Int
+    let roomId: Int?
 }
 
 /// 箱子摘要（用于总览）
@@ -22,4 +24,5 @@ struct BoxSummary: Identifiable, Codable, Hashable {
     let boxUid: String
     let name: String
     let bookCount: Int
+    let roomId: Int?
 }

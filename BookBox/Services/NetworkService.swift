@@ -199,14 +199,39 @@ final class NetworkService: ObservableObject {
         try await request("DELETE", path: "/libraries/\(id)")
     }
 
-    // MARK: - 箱子 API
+    // MARK: - 房间 API
 
-    func fetchBoxes(libraryId: Int? = nil) async throws -> [Box] {
+    func fetchRooms(libraryId: Int? = nil) async throws -> [Room] {
         var queryItems: [URLQueryItem]?
         if let libraryId {
             queryItems = [URLQueryItem(name: "libraryId", value: "\(libraryId)")]
         }
-        return try await request("GET", path: "/boxes", queryItems: queryItems)
+        return try await request("GET", path: "/rooms", queryItems: queryItems)
+    }
+
+    func createRoom(_ room: RoomRequest) async throws -> Room {
+        try await request("POST", path: "/rooms", body: room)
+    }
+
+    func updateRoom(id: Int, _ req: RoomUpdateRequest) async throws -> Room {
+        try await request("PUT", path: "/rooms/\(id)", body: req)
+    }
+
+    func deleteRoom(id: Int) async throws -> EmptyResponse {
+        try await request("DELETE", path: "/rooms/\(id)")
+    }
+
+    // MARK: - 箱子 API
+
+    func fetchBoxes(libraryId: Int? = nil, roomId: Int? = nil) async throws -> [Box] {
+        var queryItems: [URLQueryItem] = []
+        if let libraryId {
+            queryItems.append(URLQueryItem(name: "libraryId", value: "\(libraryId)"))
+        }
+        if let roomId {
+            queryItems.append(URLQueryItem(name: "roomId", value: "\(roomId)"))
+        }
+        return try await request("GET", path: "/boxes", queryItems: queryItems.isEmpty ? nil : queryItems)
     }
 
     func createBox(_ box: BoxRequest) async throws -> Box {
@@ -236,12 +261,15 @@ final class NetworkService: ObservableObject {
 
     // MARK: - 书架 API
 
-    func fetchShelves(libraryId: Int? = nil) async throws -> [Shelf] {
-        var queryItems: [URLQueryItem]?
+    func fetchShelves(libraryId: Int? = nil, roomId: Int? = nil) async throws -> [Shelf] {
+        var queryItems: [URLQueryItem] = []
         if let libraryId {
-            queryItems = [URLQueryItem(name: "libraryId", value: "\(libraryId)")]
+            queryItems.append(URLQueryItem(name: "libraryId", value: "\(libraryId)"))
         }
-        return try await request("GET", path: "/shelves", queryItems: queryItems)
+        if let roomId {
+            queryItems.append(URLQueryItem(name: "roomId", value: "\(roomId)"))
+        }
+        return try await request("GET", path: "/shelves", queryItems: queryItems.isEmpty ? nil : queryItems)
     }
 
     func createShelf(_ shelf: ShelfRequest) async throws -> Shelf {

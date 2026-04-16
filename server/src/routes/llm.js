@@ -182,30 +182,45 @@ router.post('/recognize', async (req, res, next) => {
 function buildVoiceSystemPrompt(context) {
   const parts = ['你是 BookBox 书库助手。用户通过语音管理自己的书库。'];
 
+  const rooms = Array.isArray(context?.rooms) ? context.rooms : [];
   const shelves = Array.isArray(context?.shelves) ? context.shelves : [];
   const boxes = Array.isArray(context?.boxes) ? context.boxes : [];
 
-  if (shelves.length || boxes.length) {
-    parts.push('当前书库状态：');
+  if (rooms.length || shelves.length || boxes.length) {
+    parts.push('当前书库状态（层级：书库 → 房间 → 书架/箱子 → 书）：');
+  }
+  if (rooms.length) {
+    const desc = rooms
+      .slice(0, 30)
+      .map((r) => String(r.name || '').slice(0, 40))
+      .join('、');
+    parts.push(`房间：${desc}`);
   }
   if (shelves.length) {
     const desc = shelves
       .slice(0, 50)
-      .map((s) => `${String(s.name || '').slice(0, 40)}（${Number(s.bookCount) || 0}本）`)
+      .map((s) => {
+        const room = s.roomName ? `@${String(s.roomName).slice(0, 20)}` : '';
+        return `${String(s.name || '').slice(0, 40)}${room}（${Number(s.bookCount) || 0}本）`;
+      })
       .join('、');
     parts.push(`书架：${desc}`);
   }
   if (boxes.length) {
     const desc = boxes
       .slice(0, 50)
-      .map((b) => `${String(b.uid || '').slice(0, 20)} ${String(b.name || '').slice(0, 40)}（${Number(b.bookCount) || 0}本）`)
+      .map((b) => {
+        const room = b.roomName ? `@${String(b.roomName).slice(0, 20)}` : '';
+        return `${String(b.uid || '').slice(0, 20)} ${String(b.name || '').slice(0, 40)}${room}（${Number(b.bookCount) || 0}本）`;
+      })
       .join('、');
     parts.push(`箱子（已归档）：${desc}`);
   }
 
   parts.push('');
   parts.push('请根据用户指令返回 JSON：');
-  parts.push('{"action": "move|query|edit|list", "bookTitle": "书名", "bookId": null, "target": {"type": "shelf|box", "name": "名称"}, "reply": "回复用户的话"}');
+  parts.push('{"action": "move|query|edit|list", "bookTitle": "书名", "bookId": null, "target": {"type": "shelf|box|room", "name": "名称"}, "reply": "回复用户的话"}');
+  parts.push('说明：target.type 为 room 时表示移动书架/箱子到指定房间；为 shelf/box 时表示移动书籍到书架/箱子。');
   parts.push('只返回 JSON，不要添加解释或 markdown 代码块。');
   return parts.join('\n');
 }

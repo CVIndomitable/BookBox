@@ -19,8 +19,27 @@ model Library {
   books       Book[]
   shelves     Shelf[]
   boxes       Box[]
+  rooms       Room[]
 
   @@map("libraries")
+}
+
+// 房间表（介于书库和书架/箱子之间）
+model Room {
+  id          Int       @id @default(autoincrement())
+  name        String    @db.VarChar(200)
+  description String?   @db.Text
+  isDefault   Boolean   @default(false) @map("is_default")
+  libraryId   Int       @map("library_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  library     Library   @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  shelves     Shelf[]
+  boxes       Box[]
+
+  @@index([libraryId])
+  @@map("rooms")
 }
 
 // 书籍表
@@ -61,12 +80,15 @@ model Shelf {
   description String?   @db.Text
   bookCount   Int       @default(0) @map("book_count")
   libraryId   Int?      @map("library_id")
+  roomId      Int?      @map("room_id")
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
   library     Library?  @relation(fields: [libraryId], references: [id], onDelete: SetNull)
+  room        Room?     @relation(fields: [roomId], references: [id], onDelete: SetNull)
 
   @@index([libraryId])
+  @@index([roomId])
   @@map("shelves")
 }
 
@@ -78,13 +100,16 @@ model Box {
   description String?  @db.Text
   bookCount   Int      @default(0) @map("book_count")
   libraryId   Int?     @map("library_id")
+  roomId      Int?     @map("room_id")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   library     Library?      @relation(fields: [libraryId], references: [id], onDelete: SetNull)
+  room        Room?         @relation(fields: [roomId], references: [id], onDelete: SetNull)
   scanRecords ScanRecord[]
 
   @@index([libraryId])
+  @@index([roomId])
   @@map("boxes")
 }
 

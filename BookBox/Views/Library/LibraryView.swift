@@ -259,7 +259,35 @@ struct LibraryView: View {
                         }
                     }
 
-                    // 书架区域
+                    // 房间区域
+                    Section {
+                        if let rooms = overview?.rooms, !rooms.isEmpty {
+                            ForEach(rooms) { room in
+                                NavigationLink {
+                                    RoomDetailView(roomId: room.id, roomName: room.name, libraryId: selectedLibraryId ?? 0)
+                                } label: {
+                                    roomRow(room)
+                                }
+                            }
+                        } else {
+                            Text("暂无房间")
+                                .foregroundStyle(.secondary)
+                        }
+                        if let libraryId = selectedLibraryId {
+                            NavigationLink {
+                                RoomCreateView(libraryId: libraryId) { _ in
+                                    Task { await loadOverview() }
+                                }
+                            } label: {
+                                Label("新建房间", systemImage: "plus.circle")
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                        }
+                    } header: {
+                        Label("房间", systemImage: "square.grid.2x2")
+                    }
+
+                    // 书架区域（带房间标注）
                     Section {
                         if let shelves = overview?.shelves, !shelves.isEmpty {
                             ForEach(shelves) { shelf in
@@ -284,7 +312,7 @@ struct LibraryView: View {
                         Label("书架", systemImage: "books.vertical")
                     }
 
-                    // 箱子区域
+                    // 箱子区域（带房间标注）
                     Section {
                         if let boxes = overview?.boxes, !boxes.isEmpty {
                             ForEach(boxes) { box in
@@ -319,6 +347,45 @@ struct LibraryView: View {
         }
     }
 
+    /// 查找房间名（用于在书架/箱子行显示其所在房间）
+    private func roomNameFor(_ roomId: Int?) -> String? {
+        guard let roomId, let rooms = overview?.rooms else { return nil }
+        return rooms.first(where: { $0.id == roomId })?.name
+    }
+
+    private func roomRow(_ room: RoomSummary) -> some View {
+        let shelfCount = overview?.shelves.filter { $0.roomId == room.id }.count ?? 0
+        let boxCount = overview?.boxes.filter { $0.roomId == room.id }.count ?? 0
+        return HStack(spacing: 12) {
+            Image(systemName: "square.grid.2x2.fill")
+                .font(.title2)
+                .foregroundStyle(.purple)
+                .frame(width: 44, height: 44)
+                .background(Color.purple.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(room.name)
+                        .font(.body.weight(.medium))
+                    if room.isDefault {
+                        Text("默认")
+                            .font(.caption2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.2))
+                            .clipShape(Capsule())
+                    }
+                }
+                Text("\(shelfCount) 书架 · \(boxCount) 箱子")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 4)
+    }
+
     private func shelfRow(_ shelf: ShelfSummary) -> some View {
         HStack(spacing: 12) {
             Image(systemName: "books.vertical.fill")
@@ -331,10 +398,17 @@ struct LibraryView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(shelf.name)
                     .font(.body.weight(.medium))
-                if let location = shelf.location {
-                    Text(location)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    if let roomName = roomNameFor(shelf.roomId) {
+                        Text(roomName)
+                            .font(.caption)
+                            .foregroundStyle(.purple)
+                    }
+                    if let location = shelf.location {
+                        Text(location)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
@@ -359,9 +433,16 @@ struct LibraryView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(box.name)
                     .font(.body.weight(.medium))
-                Text(box.boxUid)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    if let roomName = roomNameFor(box.roomId) {
+                        Text(roomName)
+                            .font(.caption)
+                            .foregroundStyle(.purple)
+                    }
+                    Text(box.boxUid)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Spacer()

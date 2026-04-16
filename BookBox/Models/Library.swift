@@ -19,6 +19,7 @@ struct LibraryDetail: Codable {
     let description: String?
     let totalBooks: Int
     let unlocated: Int
+    let rooms: [RoomSummary]?
     let shelves: [ShelfSummary]
     let boxes: [BoxSummary]
     let createdAt: Date?

@@ -6,6 +6,7 @@
 
 ### V2 核心变更
 - **多书库（Library）**：支持多个独立书库，顶部切换器选择当前书库，`@AppStorage` 记忆上次查看的书库。分类全局共享，书可跨书库移动。
+- **房间（Room）**：介于书库和书架/箱子之间的层级，书架/箱子挂在房间下。新建书库时自动创建"默认房间"（`is_default=true`）。箱子/书架可在同一书库内跨房间搬动，也可跨书库搬动（`libraryId` 随房间自动更新），但同一时刻只属于一个房间和一个书库。
 - **书架（Shelf）**：新增书架概念，与箱子并列作为书籍存放位置。书架为活跃区域，箱子为归档区域。
 - **统一位置模型**：一本书只能在一个位置（书架/箱子/未归位），通过 `location_type` + `location_id` 字段关联，废弃旧的 `box_books` 中间表。
 - **多模态识别**：用 MiMo 多模态大模型替代旧的 OCR + 规则提取流程，支持任意姿态的书籍识别。LLM 调用在服务器端执行，iOS 客户端不直接调用 AI API。
@@ -46,7 +47,8 @@ bookbox/
 │   ├── src/
 │   │   ├── index.js            # 入口文件
 │   │   ├── routes/
-│   │   │   ├── libraries.js    # 书库 CRUD 路由
+│   │   │   ├── libraries.js    # 书库 CRUD 路由（新建时自动建默认房间）
+│   │   │   ├── rooms.js        # 房间 CRUD 路由
 │   │   │   ├── boxes.js        # 箱子相关路由
 │   │   │   ├── books.js        # 书籍相关路由（含 move、logs）
 │   │   │   ├── shelves.js      # 书架相关路由
@@ -70,12 +72,13 @@ bookbox/
     │   ├── AppConfig.swift          # 硬编码配置（服务器地址）
     │   ├── Book.swift               # 书籍模型（含位置字段、libraryId）
     │   ├── BookLog.swift            # 操作日志模型
-    │   ├── Box.swift                # 箱子模型（含 libraryId）
+    │   ├── Box.swift                # 箱子模型（含 libraryId、roomId）
     │   ├── Category.swift           # 分类模型（全局共享）
     │   ├── Library.swift            # 书库模型
-    │   ├── LibraryOverview.swift    # 书库总览模型
+    │   ├── LibraryOverview.swift    # 书库总览模型（含 rooms）
+    │   ├── Room.swift               # 房间模型
     │   ├── ScanRecord.swift         # 扫描记录模型
-    │   ├── Shelf.swift              # 书架模型（含 libraryId）
+    │   ├── Shelf.swift              # 书架模型（含 libraryId、roomId）
     │   └── UserSettings.swift       # 用户设置模型
     ├── Views/
     │   ├── HomeView.swift           # 主界面
@@ -88,8 +91,10 @@ bookbox/
     │   │   ├── ScanResultView.swift      # 扫描结果（三色标识）
     │   │   └── BookDetailView.swift      # 书籍详情/编辑
     │   ├── Library/
-    │   │   ├── LibraryView.swift         # 书库总览（顶部书库切换+书架+箱子+全部书籍）
+    │   │   ├── LibraryView.swift         # 书库总览（顶部书库切换+房间+书架+箱子+全部书籍）
     │   │   ├── LibraryCreateView.swift   # 新建书库
+    │   │   ├── RoomCreateView.swift      # 新建房间
+    │   │   ├── RoomDetailView.swift      # 房间详情（列出其中的书架/箱子）
     │   │   ├── BoxListView.swift         # 箱子列表
     │   │   ├── BoxDetailView.swift       # 单个箱子内容
     │   │   ├── ShelfDetailView.swift     # 书架详情
@@ -144,6 +149,17 @@ bookbox/
 | created_at | DATETIME | 创建时间 |
 | updated_at | DATETIME | 更新时间 |
 
+### rooms 表
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | INT AUTO_INCREMENT | 主键 |
+| name | VARCHAR(200) | 房间名称 |
+| description | TEXT | 备注，可为空 |
+| is_default | BOOLEAN DEFAULT FALSE | 是否为该书库的默认房间 |
+| library_id | INT NOT NULL | 所属书库 ID，FK→libraries.id (ON DELETE CASCADE) |
+| created_at | DATETIME | 创建时间 |
+| updated_at | DATETIME | 更新时间 |
+
 ### shelves 表
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -153,6 +169,7 @@ bookbox/
 | description | TEXT | 备注，可为空 |
 | book_count | INT DEFAULT 0 | 书籍数量（冗余字段） |
 | library_id | INT | 所属书库 ID，可为空 |
+| room_id | INT | 所属房间 ID，可为空（FK→rooms.id ON DELETE SET NULL） |
 | created_at | DATETIME | 创建时间 |
 | updated_at | DATETIME | 更新时间 |
 
@@ -165,6 +182,7 @@ bookbox/
 | description | TEXT | 备注，可为空 |
 | book_count | INT DEFAULT 0 | 书籍数量（冗余字段） |
 | library_id | INT | 所属书库 ID，可为空 |
+| room_id | INT | 所属房间 ID，可为空（FK→rooms.id ON DELETE SET NULL） |
 | created_at | DATETIME | 创建时间 |
 | updated_at | DATETIME | 更新时间 |
 
@@ -195,25 +213,32 @@ bookbox/
 
 ### 书库管理
 - `GET    /api/libraries`          — 获取所有书库列表（附带书籍数量）
-- `POST   /api/libraries`          — 新建书库 `{ name, location?, description? }`
-- `GET    /api/libraries/:id`      — 获取书库详情（含总览统计：书籍数/书架/箱子）
+- `POST   /api/libraries`          — 新建书库 `{ name, location?, description? }`，同步创建"默认房间"
+- `GET    /api/libraries/:id`      — 获取书库详情（含总览统计：书籍数/房间/书架/箱子）
 - `PUT    /api/libraries/:id`      — 更新书库信息
-- `DELETE /api/libraries/:id`      — 删除书库（关联数据 libraryId 置空）
+- `DELETE /api/libraries/:id`      — 删除书库（关联数据 libraryId 置空；房间随书库 cascade 删除）
+
+### 房间管理
+- `GET    /api/rooms?libraryId=`   — 获取房间列表（可按书库筛选）
+- `POST   /api/rooms`              — 新建房间 `{ name, libraryId, description? }`
+- `GET    /api/rooms/:id`          — 房间详情（含其中的书架/箱子）
+- `PUT    /api/rooms/:id`          — 更新房间 `{ name?, description? }`
+- `DELETE /api/rooms/:id`          — 删除房间（默认房间不可删；房间下的书架/箱子转移到同书库的默认房间）
 
 ### 书架管理
-- `GET    /api/shelves`            — 获取所有书架列表
-- `POST   /api/shelves`            — 新建书架 `{ name, location?, description? }`
+- `GET    /api/shelves?libraryId=&roomId=`  — 获取所有书架列表（可按书库/房间筛选）
+- `POST   /api/shelves`            — 新建书架 `{ name, location?, description?, libraryId?, roomId? }`（仅传 libraryId 时自动归入默认房间；传 roomId 时 libraryId 以房间为准）
 - `GET    /api/shelves/:id`        — 获取书架详情及其中的书（分页）
-- `PUT    /api/shelves/:id`        — 更新书架信息
+- `PUT    /api/shelves/:id`        — 更新书架信息（支持 `roomId` / `libraryId` 搬动到其它房间/书库）
 - `DELETE /api/shelves/:id`        — 删除书架（书的 location 重置为 none）
 - `POST   /api/shelves/:id/books`  — 批量将书放入书架 `{ bookIds: [1,2,3] }`
 - `DELETE /api/shelves/:id/books/:bookId` — 从书架移走一本书
 
 ### 箱子管理
-- `GET    /api/boxes`            — 获取所有箱子列表
-- `POST   /api/boxes`            — 新建箱子
+- `GET    /api/boxes?libraryId=&roomId=`  — 获取所有箱子列表（可按书库/房间筛选）
+- `POST   /api/boxes`            — 新建箱子 `{ name, description?, libraryId?, roomId? }`（同 shelves 的归属规则）
 - `GET    /api/boxes/:id`        — 获取箱子详情及其中的书（分页）
-- `PUT    /api/boxes/:id`        — 更新箱子信息
+- `PUT    /api/boxes/:id`        — 更新箱子信息（支持 `roomId` / `libraryId` 搬动）
 - `DELETE /api/boxes/:id`        — 删除箱子（书的 location 重置为 none）
 - `POST   /api/boxes/:id/books`  — 向箱子中添加书籍
 - `DELETE /api/boxes/:id/books/:bookId` — 从箱子中移除一本书
