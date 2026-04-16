@@ -153,6 +153,29 @@ model UserSetting {
   @@map("user_settings")
 }
 
+// AI 供应商池：多供应商按优先级故障转移
+model LlmSupplier {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(100)              // 显示名，如 mimo、openai、deepseek
+  protocol    String   @default("anthropic") @db.VarChar(20)  // anthropic / openai
+  endpoint    String   @db.VarChar(500)
+  apiKey      String   @map("api_key") @db.VarChar(500)
+  visionModel String?  @map("vision_model") @db.VarChar(100)
+  textModel   String?  @map("text_model") @db.VarChar(100)
+  priority    Int      @default(100)                 // 越大越优先
+  enabled     Boolean  @default(true)
+  timeoutMs   Int      @default(120000) @map("timeout_ms")
+  note        String?  @db.Text
+  lastOkAt    DateTime? @map("last_ok_at")
+  lastFailAt  DateTime? @map("last_fail_at")
+  lastError   String?  @map("last_error") @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([enabled, priority])
+  @@map("llm_suppliers")
+}
+
 // 缓存命中率统计表
 model CacheStat {
   id        Int      @id @default(autoincrement())

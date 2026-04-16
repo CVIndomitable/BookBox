@@ -14,6 +14,8 @@ import logsRouter from './routes/logs.js';
 import libraryRouter from './routes/library.js';
 import librariesRouter from './routes/libraries.js';
 import llmRouter from './routes/llm.js';
+import suppliersRouter from './routes/suppliers.js';
+import { pingSupplier } from './utils/llmPool.js';
 
 // 启动时检查关键环境变量
 if (!process.env.DATABASE_URL) {
@@ -63,12 +65,13 @@ app.get('/api/health', (req, res) => {
 // 认证中间件
 app.use('/api', authMiddleware);
 
-// 详细健康检查（需要认证）— 检测服务器、数据库、AI 连通性
+// 详细健康检查（需要认证）— 检测服务器、数据库、AI 供应商池
 app.get('/api/health/detailed', async (req, res) => {
   const results = {
     server: { status: 'ok' },
     database: { status: 'checking' },
     ai: { status: 'checking' },
+    suppliers: [],
   };
 
   // 检查数据库连通性
@@ -79,50 +82,47 @@ app.get('/api/health/detailed', async (req, res) => {
     results.database = { status: 'error', message: '数据库连接失败' };
   }
 
-  // 检查 AI 服务
+  // 检查 AI 供应商池
   try {
-    const settings = await prisma.userSetting.findFirst();
-    if (!settings || !settings.llmApiKey) {
-      results.ai = { status: 'not_configured', message: '未配置 API Key' };
-    } else {
-      const endpoint = (settings.llmEndpoint || 'https://api.xiaomimimo.com/anthropic').replace(/\/+$/, '');
-      const model = 'mimo-v2-flash';
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000);
-      try {
-        const response = await fetch(`${endpoint}/v1/messages`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': settings.llmApiKey,
-            'anthropic-version': '2023-06-01',
-          },
-          body: JSON.stringify({
-            model,
-            max_tokens: 1,
-            messages: [{ role: 'user', content: 'ping' }],
-          }),
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
+    const pool = await prisma.llmSupplier.findMany({
+      where: { enabled: true },
+      orderBy: [{ priority: 'asc' }, { id: 'asc' }],
+    });
 
-        if (response.ok) {
-          results.ai = { status: 'ok' };
-        } else if (response.status === 401 || response.status === 403) {
-          results.ai = { status: 'error', message: 'API Key 无效' };
-        } else {
-          results.ai = { status: 'error', message: `AI 服务返回 ${response.status}` };
-        }
-      } catch (fetchErr) {
-        clearTimeout(timeout);
-        if (fetchErr.name === 'AbortError') {
-          results.ai = { status: 'error', message: 'AI 服务连接超时' };
-        } else {
-          results.ai = { status: 'error', message: 'AI 服务无法连接' };
-        }
+    if (pool.length === 0) {
+      results.ai = { status: 'not_configured', message: '未配置任何启用的 AI 供应商' };
+    } else {
+      // 并发 ping 所有启用的供应商（带 10s 超时）
+      const pingResults = await Promise.all(
+        pool.map(async (s) => {
+          const timed = { ...s, timeoutMs: 10000 };
+          const r = await pingSupplier(timed);
+          return {
+            name: s.name,
+            priority: s.priority,
+            status: r.ok ? 'ok' : 'error',
+            message: r.ok ? undefined : (r.error || '').slice(0, 200),
+          };
+        })
+      );
+
+      results.suppliers = pingResults;
+
+      const firstOk = pingResults.find(r => r.status === 'ok');
+      if (!firstOk) {
+        results.ai = { status: 'error', message: '所有 AI 供应商均不可用' };
+      } else if (firstOk !== pingResults[0]) {
+        // 顶级供应商挂了但有备用
+        results.ai = {
+          status: 'degraded',
+          message: `顶级供应商 ${pingResults[0].name} 不可用，已降级到 ${firstOk.name}`,
+        };
+      } else {
+        results.ai = { status: 'ok' };
       }
     }
   } catch (err) {
+    console.error('[health] 检查 AI 供应商池失败', err);
     results.ai = { status: 'error', message: '检查 AI 配置时出错' };
   }
 
@@ -140,6 +140,7 @@ app.use('/api/logs', logsRouter);
 app.use('/api/library', libraryRouter);
 app.use('/api/libraries', librariesRouter);
 app.use('/api/llm', llmRouter);
+app.use('/api/suppliers', suppliersRouter);
 
 // 全局错误处理
 app.use((err, req, res, next) => {

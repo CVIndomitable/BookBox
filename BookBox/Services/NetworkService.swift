@@ -419,16 +419,25 @@ final class NetworkService: ObservableObject {
     /// 通过服务器端 AI 识别图片中的书籍
     func recognizeBooks(imageData: Data) async throws -> [RecognizedBook] {
         struct Req: Codable { let image: String }
-        struct Resp: Codable { let books: [RecognizedBook] }
+        struct Resp: Codable { let books: [RecognizedBook]; let supplier: SupplierMeta? }
         let base64 = imageData.base64EncodedString()
         let response: Resp = try await request("POST", path: "/llm/recognize", body: Req(image: base64), timeout: 120)
+        SupplierStatusStore.shared.record(response.supplier)
         return response.books
     }
 
     /// 通过服务器端 AI 解析语音指令
     func processVoiceCommand(text: String, systemPrompt: String) async throws -> VoiceCommandResult {
         struct Req: Codable { let text: String; let systemPrompt: String }
-        return try await request("POST", path: "/llm/voice-command", body: Req(text: text, systemPrompt: systemPrompt), timeout: 60)
+        let result: VoiceCommandResult = try await request("POST", path: "/llm/voice-command", body: Req(text: text, systemPrompt: systemPrompt), timeout: 60)
+        SupplierStatusStore.shared.record(result.supplier)
+        return result
+    }
+
+    // MARK: - 供应商池（只读）
+
+    func fetchSuppliers() async throws -> [LlmSupplier] {
+        try await request("GET", path: "/suppliers")
     }
 
     // MARK: - LLM 缓存统计
@@ -467,9 +476,18 @@ struct ServiceStatus: Codable {
     let message: String?
 }
 
+/// 供应商健康状态（health/detailed 返回）
+struct SupplierHealth: Codable {
+    let name: String
+    let priority: Int
+    let status: String     // ok / error
+    let message: String?
+}
+
 /// 详细健康检查结果
 struct HealthCheckResult: Codable {
     let server: ServiceStatus
     let database: ServiceStatus
     let ai: ServiceStatus
+    let suppliers: [SupplierHealth]?
 }

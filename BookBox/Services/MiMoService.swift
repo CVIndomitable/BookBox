@@ -66,6 +66,7 @@ struct VoiceCommandResult: Codable {
     var target: VoiceTarget?
     var reply: String
     var cached: Bool?        // 是否来自服务器缓存
+    var supplier: SupplierMeta?  // 本次调用使用的供应商（用于降级提醒）
 
     struct VoiceTarget: Codable {
         var type: String     // shelf/box

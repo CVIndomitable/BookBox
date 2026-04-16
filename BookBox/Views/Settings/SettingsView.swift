@@ -1,18 +1,13 @@
 import SwiftUI
 
-/// 设置页面 — AI 配置、地区模式（所有配置保存在服务器）
+/// 设置页 — 地区 / 语音开关 / 连接测试 / 供应商池状态。
+/// AI 供应商配置全部在服务器端（中途岛）管理，iOS 仅读取展示。
 struct SettingsView: View {
     @AppStorage("voiceControlEnabled") private var voiceControlEnabled = false
     @State private var regionMode: RegionMode = .mainland
-    @State private var mimoApiKey: String = ""
-    @State private var mimoEndpoint: String = ""
-    @State private var mimoVisionModel: String = ""
-    @State private var hasExistingKey = false
-    @State private var apiKeyModified = false
     @State private var isLoading = true
     @State private var isSaving = false
     @State private var showSaveSuccess = false
-    @State private var showAdvanced = false
     @State private var errorMessage: String?
     @State private var cacheStats: CacheStats?
     @State private var isLoadingCache = false
@@ -20,6 +15,9 @@ struct SettingsView: View {
     @State private var isCheckingHealth = false
     @State private var healthResult: HealthCheckResult?
     @State private var healthError: String?
+    @State private var suppliers: [LlmSupplier] = []
+    @State private var isLoadingSuppliers = false
+    @State private var suppliersError: String?
 
     var body: some View {
         NavigationStack {
@@ -55,6 +53,29 @@ struct SettingsView: View {
                         healthStatusRow("服务器", status: result.server)
                         healthStatusRow("数据库", status: result.database)
                         healthStatusRow("AI 服务", status: result.ai)
+
+                        if let pool = result.suppliers, !pool.isEmpty {
+                            DisclosureGroup("供应商明细（\(pool.count)）") {
+                                ForEach(pool, id: \.name) { s in
+                                    HStack {
+                                        Image(systemName: s.status == "ok" ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                            .foregroundStyle(s.status == "ok" ? .green : .red)
+                                        Text(s.name)
+                                            .font(.callout)
+                                        Text("P\(s.priority)")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                        if let msg = s.message {
+                                            Text(msg)
+                                                .font(.caption2)
+                                                .foregroundStyle(.red)
+                                                .lineLimit(1)
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     if let error = healthError {
@@ -64,6 +85,43 @@ struct SettingsView: View {
                     }
                 } header: {
                     Text("连接测试")
+                }
+
+                Section {
+                    if isLoadingSuppliers && suppliers.isEmpty {
+                        HStack {
+                            Spacer()
+                            ProgressView()
+                            Spacer()
+                        }
+                    } else if let err = suppliersError {
+                        Label(err, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.caption)
+                    } else if suppliers.isEmpty {
+                        Text("尚未配置任何供应商")
+                            .foregroundStyle(.secondary)
+                            .font(.callout)
+                    } else {
+                        ForEach(suppliers) { s in
+                            supplierRow(s)
+                        }
+
+                        Button {
+                            loadSuppliers()
+                        } label: {
+                            HStack {
+                                Spacer()
+                                Text("刷新")
+                                    .font(.caption)
+                                Spacer()
+                            }
+                        }
+                    }
+                } header: {
+                    Text("AI 供应商池")
+                } footer: {
+                    Text("供应商及优先级由服务器统一管理。数字越小优先级越高，高优先级不可用时自动降级到下一级并在顶部提醒。")
                 }
 
                 Section {
@@ -77,41 +135,6 @@ struct SettingsView: View {
                     Text(regionMode == .mainland
                          ? "优先使用豆瓣搜索中文书籍"
                          : "优先使用 Google Books 搜索")
-                }
-
-                Section {
-                    SecureField(hasExistingKey ? "已配置（输入新值可更换）" : "输入 API Key", text: $mimoApiKey)
-                        .textContentType(.password)
-                        .onChange(of: mimoApiKey) { _, _ in
-                            apiKeyModified = true
-                        }
-                } header: {
-                    Text("AI 识别配置")
-                } footer: {
-                    Text("配置 API Key 后可使用 AI 识别书籍和语音助手。未配置时使用本地 OCR 识别。API Key 保存在服务器端，不存储在手机上。")
-                }
-
-                Section {
-                    Toggle("高级设置", isOn: $showAdvanced)
-
-                    if showAdvanced {
-                        TextField("API 端点", text: $mimoEndpoint)
-                            .keyboardType(.URL)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-
-                        TextField("视觉模型", text: $mimoVisionModel)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                    }
-                } header: {
-                    if showAdvanced {
-                        Text("模型配置")
-                    }
-                } footer: {
-                    if showAdvanced {
-                        Text("一般无需修改。默认端点和模型已内置在服务器端。")
-                    }
                 }
 
                 Section {
@@ -139,7 +162,6 @@ struct SettingsView: View {
                     Text("开启后在主界面显示悬浮麦克风按钮，可通过语音管理书库。关闭后仍可通过 Siri 使用语音指令。")
                 }
 
-                // LLM 缓存统计
                 Section {
                     DisclosureGroup("语音缓存统计") {
                         if let stats = cacheStats {
@@ -183,6 +205,7 @@ struct SettingsView: View {
             .task {
                 await loadRemoteSettings()
                 await loadCacheStats()
+                loadSuppliers()
             }
             .alert("已保存", isPresented: $showSaveSuccess) {
                 Button("确定") {}
@@ -198,18 +221,70 @@ struct SettingsView: View {
         }
     }
 
+    @ViewBuilder
+    private func supplierRow(_ s: LlmSupplier) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(s.name)
+                    .font(.callout.weight(.semibold))
+                Text("P\(s.priority)")
+                    .font(.caption2)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.orange.opacity(0.2), in: Capsule())
+                    .foregroundStyle(.orange)
+                Spacer()
+                if s.enabled {
+                    Text("已启用")
+                        .font(.caption2)
+                        .foregroundStyle(.green)
+                } else {
+                    Text("已禁用")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Text("\(s.protocolName) · \(s.endpoint)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            if let vm = s.visionModel, !vm.isEmpty {
+                Text("视觉：\(vm)   文本：\(s.textModel ?? "—")")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            if let err = s.lastError, s.lastFailAt != nil {
+                Text("最近错误：\(err)")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
     private func loadRemoteSettings() async {
         isLoading = true
         do {
             let settings = try await NetworkService.shared.fetchSettings()
             regionMode = settings.regionMode
-            hasExistingKey = settings.hasLlmApiKey ?? false
-            mimoEndpoint = settings.llmEndpoint ?? ""
-            mimoVisionModel = settings.llmModel ?? ""
         } catch {
             // 远程设置加载失败不阻塞使用
         }
         isLoading = false
+    }
+
+    private func loadSuppliers() {
+        isLoadingSuppliers = true
+        suppliersError = nil
+        Task {
+            do {
+                suppliers = try await NetworkService.shared.fetchSuppliers()
+            } catch {
+                suppliersError = "无法加载供应商列表"
+            }
+            isLoadingSuppliers = false
+        }
     }
 
     private func loadCacheStats() async {
@@ -240,13 +315,17 @@ struct SettingsView: View {
         HStack {
             Text(title)
             Spacer()
-            Image(systemName: status.status == "ok" ? "checkmark.circle.fill" :
-                  status.status == "not_configured" ? "exclamationmark.triangle.fill" :
-                  "xmark.circle.fill")
-                .foregroundStyle(status.status == "ok" ? .green :
-                               status.status == "not_configured" ? .orange : .red)
-            Text(status.status == "ok" ? "正常" :
-                 status.message ?? "异常")
+            let isOk = status.status == "ok"
+            let isDegraded = status.status == "degraded"
+            let isNotConfigured = status.status == "not_configured"
+            Image(systemName: isOk ? "checkmark.circle.fill" :
+                              isDegraded ? "exclamationmark.triangle.fill" :
+                              isNotConfigured ? "exclamationmark.triangle.fill" :
+                              "xmark.circle.fill")
+                .foregroundStyle(isOk ? .green :
+                                 (isDegraded || isNotConfigured) ? .orange :
+                                 .red)
+            Text(isOk ? "正常" : (status.message ?? "异常"))
                 .foregroundStyle(.secondary)
                 .font(.caption)
         }
@@ -274,19 +353,14 @@ struct SettingsView: View {
             do {
                 let settings = UserSettings(
                     regionMode: regionMode,
-                    llmProvider: "mimo",
-                    llmApiKey: apiKeyModified && !mimoApiKey.isEmpty ? mimoApiKey : nil,
-                    llmEndpoint: mimoEndpoint.isEmpty ? nil : mimoEndpoint,
-                    llmModel: mimoVisionModel.isEmpty ? nil : mimoVisionModel,
+                    llmProvider: nil,
+                    llmApiKey: nil,
+                    llmEndpoint: nil,
+                    llmModel: nil,
                     llmSupportsSearch: false,
                     hasLlmApiKey: nil
                 )
                 _ = try await NetworkService.shared.updateSettings(settings)
-                if apiKeyModified && !mimoApiKey.isEmpty {
-                    hasExistingKey = true
-                }
-                mimoApiKey = ""
-                apiKeyModified = false
                 showSaveSuccess = true
             } catch {
                 errorMessage = error.chineseDescription

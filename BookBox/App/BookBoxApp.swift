@@ -7,6 +7,9 @@ struct BookBoxApp: App {
     var body: some Scene {
         WindowGroup {
             HomeView()
+                .overlay(alignment: .top) {
+                    SupplierDegradationBanner()
+                }
                 .overlay(alignment: .bottomTrailing) {
                     if voiceControlEnabled {
                         VoiceAssistantButton()
