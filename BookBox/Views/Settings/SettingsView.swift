@@ -248,8 +248,10 @@ struct SettingsView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-            if let vm = s.visionModel, !vm.isEmpty {
-                Text("视觉：\(vm)   文本：\(s.textModel ?? "—")")
+            let vm = (s.visionModel?.isEmpty == false) ? s.visionModel! : "—"
+            let tm = (s.textModel?.isEmpty == false) ? s.textModel! : "—"
+            if vm != "—" || tm != "—" {
+                Text("视觉：\(vm)   文本：\(tm)")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
