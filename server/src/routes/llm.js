@@ -68,9 +68,45 @@ function cleanExpiredCache() {
   }
 }
 
-// 清理 markdown 包裹的 JSON
+// 清理 markdown 包裹的 JSON，并尽量从混入的解释性文字里抽出首个 JSON 块
+// AI 偶尔会返回 "好的，识别结果如下：[...]" 或 "没有看到书籍" 这类裸文本，
+// 先剥掉 ``` 围栏，再按 [ / { 成对匹配截取最外层 JSON。
 function cleanJson(text) {
-  return text.replace(/```json/g, '').replace(/```/g, '').trim();
+  if (!text) return '';
+  let s = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+
+  // 扫描首个 [ 或 {，按深度配对找到匹配的右括号，剔除前后杂散文字
+  const openIdx = (() => {
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (c === '[' || c === '{') return i;
+    }
+    return -1;
+  })();
+  if (openIdx === -1) return s;
+
+  const open = s[openIdx];
+  const close = open === '[' ? ']' : '}';
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = openIdx; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (esc) { esc = false; continue; }
+      if (c === '\\') { esc = true; continue; }
+      if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') { inStr = true; continue; }
+    if (c === open) depth++;
+    else if (c === close) {
+      depth--;
+      if (depth === 0) return s.slice(openIdx, i + 1);
+    }
+  }
+  // 未闭合（可能被 max_tokens 截断），把从第一个 [ / { 开始的全部返回
+  return s.slice(openIdx);
 }
 
 // 清理并验证 base64 图片数据
@@ -157,11 +193,26 @@ router.post('/recognize', async (req, res, next) => {
       books = JSON.parse(cleaned);
     } catch {
       console.warn('[LLM] JSON 解析失败，原始内容:', text.slice(0, 500));
-      return res.status(502).json({ error: 'AI 返回格式异常，请重试', supplier });
+      // 把 AI 原文片段带回去，方便用户/日志判断是拒答、截断还是格式错误
+      const snippet = text.trim().slice(0, 120);
+      return res.status(502).json({
+        error: `AI 返回格式异常，请重试（原文片段：${snippet}）`,
+        supplier,
+      });
     }
 
-    if (!Array.isArray(books)) {
-      books = [books];
+    // 兼容 AI 偶尔返回 {"books":[...]} / {"result":[...]} 之类的外壳
+    if (books && !Array.isArray(books) && typeof books === 'object') {
+      const wrapped = Array.isArray(books.books) ? books.books
+        : Array.isArray(books.result) ? books.result
+        : Array.isArray(books.data) ? books.data
+        : Array.isArray(books.items) ? books.items
+        : null;
+      if (wrapped) {
+        books = wrapped;
+      } else {
+        books = [books];
+      }
     }
 
     res.json({ books, supplier });
