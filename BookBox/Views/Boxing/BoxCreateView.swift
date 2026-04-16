@@ -37,54 +37,9 @@ struct BoxCreateView: View {
 
     var body: some View {
         Form {
-            Section("箱子信息") {
-                TextField("箱子名称", text: $name)
-                TextField("备注（可选）", text: $description, axis: .vertical)
-                    .lineLimit(3...6)
-            }
-
-            Section("归属（必选）") {
-                // 外部未传入书库时，显示书库选择器
-                if libraryId == nil {
-                    if isLoadingLibraries {
-                        ProgressView()
-                    } else if libraries.isEmpty {
-                        Text("暂无书库，请先创建书库")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Picker("书库", selection: $selectedLibraryId) {
-                            Text("请选择书库").tag(Optional<Int>.none)
-                            ForEach(libraries) { lib in
-                                Text(lib.name).tag(Optional(lib.id))
-                            }
-                        }
-                    }
-                }
-
-                // 书库确定后显示房间选择器
-                if effectiveLibraryId != nil {
-                    if isLoadingRooms {
-                        ProgressView()
-                    } else if rooms.isEmpty {
-                        Text("该书库暂无房间")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Picker("房间", selection: $selectedRoomId) {
-                            Text("请选择房间").tag(Optional<Int>.none)
-                            ForEach(rooms) { room in
-                                Text(room.isDefault ? "\(room.name)（默认）" : room.name)
-                                    .tag(Optional(room.id))
-                            }
-                        }
-                    }
-                }
-            }
-
-            Section {
-                Text("编号将在创建后自动生成，格式：YYYYMMDD-NNN")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            infoSection
+            placementSection
+            hintSection
         }
         .navigationTitle("新建箱子")
         .navigationBarTitleDisplayMode(.inline)
@@ -113,6 +68,69 @@ struct BoxCreateView: View {
             Button("确定") { errorMessage = nil }
         } message: {
             Text(errorMessage ?? "")
+        }
+    }
+
+    private var infoSection: some View {
+        Section("箱子信息") {
+            TextField("箱子名称", text: $name)
+            TextField("备注（可选）", text: $description, axis: .vertical)
+                .lineLimit(3...6)
+        }
+    }
+
+    @ViewBuilder
+    private var placementSection: some View {
+        Section("归属（必选）") {
+            if libraryId == nil {
+                libraryPicker
+            }
+            if effectiveLibraryId != nil {
+                roomPicker
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var libraryPicker: some View {
+        if isLoadingLibraries {
+            ProgressView()
+        } else if libraries.isEmpty {
+            Text("暂无书库，请先创建书库")
+                .foregroundStyle(.secondary)
+        } else {
+            Picker("书库", selection: $selectedLibraryId) {
+                Text("请选择书库").tag(Int?.none)
+                ForEach(libraries) { lib in
+                    Text(lib.name).tag(Int?(lib.id))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var roomPicker: some View {
+        if isLoadingRooms {
+            ProgressView()
+        } else if rooms.isEmpty {
+            Text("该书库暂无房间")
+                .foregroundStyle(.secondary)
+        } else {
+            Picker("房间", selection: $selectedRoomId) {
+                Text("请选择房间").tag(Int?.none)
+                ForEach(rooms) { room in
+                    Text(room.isDefault ? "\(room.name)（默认）" : room.name)
+                        .tag(Int?(room.id))
+                }
+            }
+        }
+    }
+
+    private var hintSection: some View {
+        Section {
+            Text("编号将在创建后自动生成，格式：YYYYMMDD-NNN")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
