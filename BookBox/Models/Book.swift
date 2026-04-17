@@ -100,3 +100,25 @@ struct MoveBookRequest: Codable {
     let method: String?
     let rawInput: String?
 }
+
+/// 查重候选（请求体里带的一条待新增书）
+struct DuplicateCheckCandidate: Codable {
+    let title: String
+    let publisher: String?
+}
+
+/// 查重命中项：index 是候选数组中的下标，existing 是库中已存在的那本
+struct DuplicateHit: Codable {
+    let index: Int
+    let existing: ExistingBookRef
+
+    struct ExistingBookRef: Codable {
+        let id: Int
+        let title: String
+        let publisher: String?
+        let author: String?
+        let libraryId: Int?
+        let locationType: LocationType?
+        let locationId: Int?
+    }
+}

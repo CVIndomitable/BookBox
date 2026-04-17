@@ -346,6 +346,22 @@ final class NetworkService: ObservableObject {
         try await request("POST", path: "/books/batch", body: batch)
     }
 
+    /// 查重：按"书名 + 出版社"精确匹配
+    /// libraryId 非空时只在该书库内查；为空时跨全部书库
+    func checkDuplicates(
+        candidates: [DuplicateCheckCandidate],
+        libraryId: Int? = nil
+    ) async throws -> [DuplicateHit] {
+        struct Req: Codable { let books: [DuplicateCheckCandidate]; let libraryId: Int? }
+        struct Resp: Codable { let duplicates: [DuplicateHit] }
+        let resp: Resp = try await request(
+            "POST",
+            path: "/books/check-duplicates",
+            body: Req(books: candidates, libraryId: libraryId)
+        )
+        return resp.duplicates
+    }
+
     func fetchBook(id: Int) async throws -> Book {
         try await request("GET", path: "/books/\(id)")
     }

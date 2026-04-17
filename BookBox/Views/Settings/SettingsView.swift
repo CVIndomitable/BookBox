@@ -4,6 +4,7 @@ import SwiftUI
 /// AI 供应商配置全部在服务器端（中途岛）管理，iOS 仅读取展示。
 struct SettingsView: View {
     @AppStorage("assistantMode") private var assistantModeRaw: String = AssistantMode.off.rawValue
+    @AppStorage("duplicateCheckEnabled") private var duplicateCheckEnabled: Bool = false
     @State private var regionMode: RegionMode = .mainland
     @State private var isLoading = true
     @State private var isSaving = false
@@ -167,6 +168,14 @@ struct SettingsView: View {
                     Text("应用内助手")
                 } footer: {
                     Text("语音悬浮：右下角悬浮麦克风按钮。文字输入：底部新增\"助手\"Tab，键盘输入指令。关闭后仍可通过 Siri 使用语音指令。")
+                }
+
+                Section {
+                    Toggle("加书时查重", isOn: $duplicateCheckEnabled)
+                } header: {
+                    Text("查重")
+                } footer: {
+                    Text("打开后，任何模式下往书库添加书籍时，若已存在书名与出版社完全一致的书将提醒。默认关闭。")
                 }
 
                 Section {

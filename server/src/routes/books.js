@@ -197,6 +197,62 @@ router.post('/', async (req, res, next) => {
   }
 });
 
+// 查重：按「书名 + 出版社」精确匹配返回已存在的书
+// 请求体：{ books: [{title, publisher?}], libraryId? }
+// 响应：{ duplicates: [{ index, existing: {id, title, publisher, author, libraryId, locationType, locationId} }] }
+// 规则：title 去首尾空白 + 小写后相等；publisher 两侧都为空也算相等
+router.post('/check-duplicates', async (req, res, next) => {
+  try {
+    const { books, libraryId } = req.body || {};
+    if (!Array.isArray(books) || books.length === 0) {
+      return res.status(400).json({ error: '请提供书籍列表' });
+    }
+
+    const libId = parseOptionalId(libraryId);
+    const norm = (s) => (s ?? '').toString().trim().toLowerCase();
+
+    const titles = Array.from(new Set(books.map((b) => norm(b?.title)).filter(Boolean)));
+    if (titles.length === 0) {
+      return res.json({ duplicates: [] });
+    }
+
+    // 一次性按候选书名的 OR 条件拉回来，再在内存里按精确规则匹配
+    const where = {
+      OR: titles.map((t) => ({ title: { equals: t } })),
+    };
+    if (libId) where.libraryId = libId;
+
+    // Prisma 默认 collation 对中文大小写不敏感，title equals 已够用；这里宽松一点用 contains 也能命中，但保持精确
+    const candidates = await prisma.book.findMany({
+      where,
+      select: {
+        id: true,
+        title: true,
+        publisher: true,
+        author: true,
+        libraryId: true,
+        locationType: true,
+        locationId: true,
+      },
+      take: 2000,
+    });
+
+    const duplicates = [];
+    books.forEach((b, index) => {
+      const nt = norm(b?.title);
+      const np = norm(b?.publisher);
+      if (!nt) return;
+      const hit = candidates.find((c) => norm(c.title) === nt && norm(c.publisher) === np);
+      if (hit) duplicates.push({ index, existing: hit });
+    });
+
+    res.json({ duplicates });
+  } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
+    next(err);
+  }
+});
+
 // 书籍联网校验（豆瓣/Google Books/Open Library）
 // 必须声明在 /:id 之前，避免被通配路由捕获
 router.post('/verify', async (req, res, next) => {

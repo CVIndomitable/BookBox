@@ -6,10 +6,14 @@ struct ScanResultView: View {
     let locationType: LocationType
     let locationId: Int?
     var onSaved: (() -> Void)? = nil
+    @AppStorage("duplicateCheckEnabled") private var duplicateCheckEnabled: Bool = false
     @State private var editingItem: ScanResultItem?
     @State private var isSaving = false
     @State private var showSaveSuccess = false
     @State private var errorMessage: String?
+    @State private var pendingDuplicates: [DuplicateHit] = []
+    @State private var showDuplicateAlert = false
+    @State private var lastCreatedCount: Int = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -47,7 +51,7 @@ struct ScanResultView: View {
                 onSaved?()
             }
         } message: {
-            Text("已将 \(selectedCount) 本书录入\(locationType == .shelf ? "书架" : "箱子")")
+            Text("已将 \(lastCreatedCount) 本书录入\(locationType == .shelf ? "书架" : "箱子")")
         }
         .alert("保存失败", isPresented: .init(
             get: { errorMessage != nil },
@@ -57,6 +61,31 @@ struct ScanResultView: View {
         } message: {
             Text(errorMessage ?? "")
         }
+        .alert("发现重复书籍", isPresented: $showDuplicateAlert) {
+            Button("仍然录入", role: .destructive) {
+                commitSelectedBooks(skipDuplicates: false)
+            }
+            Button("跳过重复项", role: .none) {
+                commitSelectedBooks(skipDuplicates: true)
+            }
+            Button("取消", role: .cancel) {
+                isSaving = false
+                pendingDuplicates = []
+            }
+        } message: {
+            Text(duplicateMessage)
+        }
+    }
+
+    private var duplicateMessage: String {
+        let selected = results.filter(\.isSelected)
+        let lines = pendingDuplicates.prefix(5).compactMap { hit -> String? in
+            guard hit.index < selected.count else { return nil }
+            let item = selected[hit.index]
+            return "•《\(item.finalTitle)》"
+        }
+        let extra = pendingDuplicates.count > 5 ? "\n…另有 \(pendingDuplicates.count - 5) 本" : ""
+        return "以下 \(pendingDuplicates.count) 本书已在书库中存在（书名与出版社完全一致）：\n" + lines.joined(separator: "\n") + extra
     }
 
     private func resultRow(item: ScanResultItem, index: Int) -> some View {
@@ -203,35 +232,78 @@ struct ScanResultView: View {
         }
         isSaving = true
 
+        // 未开启查重：直接录入（保持原行为）
+        guard duplicateCheckEnabled else {
+            commitSelectedBooks(skipDuplicates: false)
+            return
+        }
+
+        // 开启查重：先问服务器有没有重复
         Task {
             do {
-                let books = results
-                    .filter(\.isSelected)
-                    .map { item in
-                        NewBookRequest(
-                            title: item.finalTitle,
-                            author: item.finalAuthor,
-                            isbn: item.verifyResult?.isbn,
-                            publisher: nil,
-                            coverUrl: item.verifyResult?.coverUrl,
-                            categoryId: nil,
-                            verifyStatus: item.verifyResult?.status ?? item.status,
-                            verifySource: item.verifyResult?.source ?? (item.confidence != nil ? "mimo" : nil),
-                            rawOcrText: item.rawOcrText ?? item.title
-                        )
-                    }
+                let selected = results.filter(\.isSelected)
+                let candidates = selected.map {
+                    DuplicateCheckCandidate(title: $0.finalTitle, publisher: nil)
+                }
+                let stored = UserDefaults.standard.integer(forKey: "lastLibraryId")
+                let libraryId: Int? = stored > 0 ? stored : nil
+                let hits = try await NetworkService.shared.checkDuplicates(
+                    candidates: candidates,
+                    libraryId: libraryId
+                )
+                if hits.isEmpty {
+                    commitSelectedBooks(skipDuplicates: false)
+                } else {
+                    pendingDuplicates = hits
+                    showDuplicateAlert = true
+                }
+            } catch {
+                // 查重失败不阻塞录入，降级为原流程
+                commitSelectedBooks(skipDuplicates: false)
+            }
+        }
+    }
+
+    private func commitSelectedBooks(skipDuplicates: Bool) {
+        Task {
+            do {
+                let selected = results.filter(\.isSelected)
+                let dupIndices = skipDuplicates
+                    ? Set(pendingDuplicates.map(\.index))
+                    : Set<Int>()
+                let toCreate = selected.enumerated().compactMap { idx, item -> NewBookRequest? in
+                    if dupIndices.contains(idx) { return nil }
+                    return NewBookRequest(
+                        title: item.finalTitle,
+                        author: item.finalAuthor,
+                        isbn: item.verifyResult?.isbn,
+                        publisher: nil,
+                        coverUrl: item.verifyResult?.coverUrl,
+                        categoryId: nil,
+                        verifyStatus: item.verifyResult?.status ?? item.status,
+                        verifySource: item.verifyResult?.source ?? (item.confidence != nil ? "mimo" : nil),
+                        rawOcrText: item.rawOcrText ?? item.title
+                    )
+                }
+                guard !toCreate.isEmpty else {
+                    isSaving = false
+                    pendingDuplicates = []
+                    return
+                }
                 let batch = BatchBooksRequest(
-                    books: books,
+                    books: toCreate,
                     locationType: locationType,
                     locationId: locationId,
                     libraryId: nil
                 )
-                _ = try await NetworkService.shared.createBooks(batch: batch)
+                let resp = try await NetworkService.shared.createBooks(batch: batch)
+                lastCreatedCount = resp.created
                 showSaveSuccess = true
             } catch {
                 errorMessage = error.chineseDescription
             }
             isSaving = false
+            pendingDuplicates = []
         }
     }
 }
