@@ -204,10 +204,12 @@ router.post('/:id/books', async (req, res, next) => {
         }
       }
 
-      // 更新书的位置
+      // 更新书的位置；书架归属非空时同步把书的 libraryId 对齐到书架所在书库
+      const updateData = { locationType: 'shelf', locationId: shelfId };
+      if (shelf.libraryId) updateData.libraryId = shelf.libraryId;
       await tx.book.updateMany({
         where: { id: { in: bookIds } },
-        data: { locationType: 'shelf', locationId: shelfId },
+        data: updateData,
       });
 
       // 用 COUNT 重算旧容器的 book_count

@@ -150,8 +150,10 @@ router.post('/', async (req, res, next) => {
 
     const book = await prisma.$transaction(async (tx) => {
       // 事务内校验目标存在，防止校验后、写入前目标被并发删除
+      // 同时拿到目标容器的 libraryId，作为 book.libraryId 的默认来源
+      let containerLibraryId = null;
       if (finalLocationType !== 'none') {
-        await validateLocation(tx, finalLocationType, finalLocationId);
+        containerLibraryId = await validateLocation(tx, finalLocationType, finalLocationId);
       }
 
       const created = await tx.book.create({
@@ -167,7 +169,7 @@ router.post('/', async (req, res, next) => {
           rawOcrText,
           locationType: finalLocationType,
           locationId: finalLocationId,
-          libraryId: parseOptionalId(libraryId),
+          libraryId: parseOptionalId(libraryId) ?? containerLibraryId,
         },
       });
 
@@ -285,10 +287,12 @@ router.post('/batch', async (req, res, next) => {
 
     const skipped = [];
     const results = await prisma.$transaction(async (tx) => {
-      // 事务内校验目标存在
+      // 事务内校验目标存在，同时拿到容器 libraryId 兜底
+      let containerLibraryId = null;
       if (finalLocationType !== 'none' && finalLocationId) {
-        await validateLocation(tx, finalLocationType, finalLocationId);
+        containerLibraryId = await validateLocation(tx, finalLocationType, finalLocationId);
       }
+      const resolvedLibraryId = parseOptionalId(libraryId) ?? containerLibraryId;
 
       const created = [];
 
@@ -312,7 +316,7 @@ router.post('/batch', async (req, res, next) => {
             rawOcrText: bookData.rawOcrText,
             locationType: finalLocationType,
             locationId: finalLocationId,
-            libraryId: parseOptionalId(libraryId),
+            libraryId: resolvedLibraryId,
           },
         });
 
