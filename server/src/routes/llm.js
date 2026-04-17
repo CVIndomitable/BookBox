@@ -350,6 +350,154 @@ router.post('/voice-command', async (req, res, next) => {
   }
 });
 
+// 归一化书名：去空格、常见中英标点、书名号、括号等，并转小写
+// 仅用于 Siri/语音的模糊查书，不改变数据库中存的原文
+function normalizeTitle(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/[\s\u3000]+/g, '')
+    // eslint-disable-next-line no-useless-escape
+    .replace(/[·・、，。：；！？…—\-_/\\|·."'`~!@#$%^&*+=<>?]/g, '')
+    .replace(/[《》〈〉「」『』【】〖〗（）()\[\]{}""''""'']/g, '')
+    .toLowerCase();
+}
+
+// POST /find-book — Siri/语音查书的智能搜索
+// 请求体：{ query, libraryId?, useAI? }
+//   - libraryId 指定时只搜这个库；未指定或 null 时跨全部库
+//   - useAI 默认 true；调用方做级联反馈时前几轮可以传 false 只跑 DB，避免每库都等 AI
+// 响应：{ books, method: 'strict'|'loose'|'ai'|'none', libraryId?, libraryName?, supplier? }
+// 分层：严格子串 → 归一化后双向子串 → AI 兜底（仅 useAI=true 时）
+router.post('/find-book', async (req, res, next) => {
+  try {
+    const { query, libraryId, useAI } = req.body;
+    if (!query || typeof query !== 'string' || !query.trim()) {
+      return res.status(400).json({ error: '缺少查询词' });
+    }
+
+    const aiEnabled = useAI !== false; // 默认开启，调用方显式传 false 才关闭
+
+    const baseWhere = {};
+    let libraryName = null;
+    let libId = null;
+    if (libraryId !== undefined && libraryId !== null && libraryId !== '') {
+      const id = Number(libraryId);
+      if (!Number.isInteger(id) || id <= 0) {
+        return res.status(400).json({ error: 'libraryId 非法' });
+      }
+      baseWhere.libraryId = id;
+      libId = id;
+      const lib = await prisma.library.findUnique({ where: { id } });
+      libraryName = lib?.name ?? null;
+    }
+
+    // Tier 1：原生子串匹配（命中直接返回，零额外开销）
+    const strict = await prisma.book.findMany({
+      where: {
+        ...baseWhere,
+        OR: [
+          { title: { contains: query } },
+          { author: { contains: query } },
+        ],
+      },
+      take: 5,
+      orderBy: { createdAt: 'desc' },
+    });
+    if (strict.length > 0) {
+      return res.json({ books: strict, method: 'strict', libraryId: libId, libraryName });
+    }
+
+    const normalizedQuery = normalizeTitle(query);
+    if (!normalizedQuery) {
+      return res.json({ books: [], method: 'none', libraryId: libId, libraryName });
+    }
+
+    // 拉当前库（或跨库）所有书做内存侧匹配；limit 2000 作为保护
+    const all = await prisma.book.findMany({
+      where: baseWhere,
+      take: 2000,
+      orderBy: { createdAt: 'desc' },
+    });
+    if (all.length === 0) {
+      return res.json({ books: [], method: 'none', libraryId: libId, libraryName });
+    }
+
+    // Tier 2：归一化后双向子串匹配
+    // - 正向：用户输的词含 DB 书名（用户记全了、输入多了语气词/标点）
+    // - 反向：DB 书名含用户的词（用户只记住几个字）
+    // 反向需要防止单字误中（normalizedQuery 长度 >= 2 才允许反向）
+    const looseMatches = all.filter((b) => {
+      const nt = normalizeTitle(b.title);
+      const na = normalizeTitle(b.author || '');
+      if (!nt && !na) return false;
+      if (nt && normalizedQuery.length >= 2) {
+        if (nt.includes(normalizedQuery)) return true;
+        if (normalizedQuery.length >= nt.length && normalizedQuery.includes(nt) && nt.length >= 2) return true;
+      }
+      if (na && normalizedQuery.length >= 2 && na.includes(normalizedQuery)) return true;
+      return false;
+    });
+    if (looseMatches.length > 0) {
+      return res.json({ books: looseMatches.slice(0, 5), method: 'loose', libraryId: libId, libraryName });
+    }
+
+    if (!aiEnabled) {
+      return res.json({ books: [], method: 'none', libraryId: libId, libraryName });
+    }
+
+    // Tier 3：AI 兜底，从书名列表里挑最像的
+    const MAX_TITLES = 500;
+    const titles = all.slice(0, MAX_TITLES).map((b) => ({
+      id: b.id,
+      title: b.title,
+      author: b.author || '',
+    }));
+
+    const systemPrompt = [
+      '你是 BookBox 书库助手。用户想找一本书，但输入的名字可能有错字、近音、简繁体或漏字。',
+      '请从给定的"书库书籍列表"中挑出**最可能**匹配的 1–3 本（按可能性降序）。',
+      '如果完全没有可能匹配的，返回空数组。',
+      '只返回 JSON：{"ids": [id1, id2, ...]}，不要解释、不要 markdown。',
+    ].join('\n');
+    const userText = `用户查询：${query}\n\n书籍列表：${JSON.stringify(titles)}`;
+
+    const { text: aiResp, supplier } = await callWithFallback({
+      kind: 'text',
+      maxTokens: 256,
+      system: systemPrompt,
+      userText,
+    });
+
+    let ids = [];
+    try {
+      const parsed = JSON.parse(cleanJson(aiResp));
+      if (Array.isArray(parsed?.ids)) ids = parsed.ids;
+      else if (Array.isArray(parsed)) ids = parsed;
+    } catch {
+      ids = [];
+    }
+
+    const byId = new Map(all.map((b) => [b.id, b]));
+    const aiMatches = ids
+      .map((id) => byId.get(Number(id)))
+      .filter(Boolean);
+
+    if (aiMatches.length > 0) {
+      return res.json({ books: aiMatches.slice(0, 3), method: 'ai', libraryId: libId, libraryName, supplier });
+    }
+    return res.json({ books: [], method: 'none', libraryId: libId, libraryName, supplier });
+  } catch (err) {
+    console.error('[LLM find-book]', err.message);
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        error: err.statusCode === 502 ? humanizeSupplierError(err) : err.message,
+        attempts: err.attempts,
+      });
+    }
+    next(err);
+  }
+});
+
 // GET /cache-stats — 缓存命中率统计
 router.get('/cache-stats', (req, res) => {
   const total = cacheStats.hits + cacheStats.misses;

@@ -459,6 +459,16 @@ final class NetworkService: ObservableObject {
         return result
     }
 
+    /// Siri/语音查书的智能搜索：严格子串 → 归一化宽松 → AI 兜底
+    /// method 告诉调用方匹配等级：strict 精确、loose 宽松、ai 由 AI 猜的、none 没找到
+    /// useAI=false 时只跑 DB 两层（供级联流程里前几轮只做快速筛查用）
+    func findBookSmart(query: String, libraryId: Int? = nil, useAI: Bool = true) async throws -> SmartFindResult {
+        struct Req: Codable { let query: String; let libraryId: Int?; let useAI: Bool }
+        let result: SmartFindResult = try await request("POST", path: "/llm/find-book", body: Req(query: query, libraryId: libraryId, useAI: useAI), timeout: 60)
+        SupplierStatusStore.shared.record(result.supplier)
+        return result
+    }
+
     // MARK: - 供应商池（只读）
 
     func fetchSuppliers() async throws -> [LlmSupplier] {

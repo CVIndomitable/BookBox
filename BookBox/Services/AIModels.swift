@@ -74,6 +74,19 @@ struct VoiceCommandResult: Codable {
     }
 }
 
+/// 智能查书结果：method 指示匹配层级，客户端据此调整回复口吻
+/// - strict：原始子串命中
+/// - loose：去空格/标点后命中
+/// - ai：AI 从全库里猜的，准确度不及前两者
+/// - none：三层都没命中
+struct SmartFindResult: Codable {
+    var books: [Book]
+    var method: String
+    var libraryId: Int?
+    var libraryName: String?
+    var supplier: SupplierMeta?
+}
+
 /// 书库上下文（提供给服务器的结构化状态信息）
 /// 服务器端据此构建 system prompt，客户端不再拼接提示词以防注入
 struct LibraryContext: Codable {

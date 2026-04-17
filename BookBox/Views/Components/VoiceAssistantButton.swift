@@ -206,11 +206,108 @@ struct VoiceAssistantButton: View {
             }
 
         case "query":
-            // 查询类指令，AI 回复已包含信息，无需额外操作
-            break
+            // 查询类指令：当 AI 给了书名时，走智能级联搜索，把每一步结果反馈到气泡里
+            if let bookTitle = result.bookTitle, !bookTitle.isEmpty {
+                await streamingFindBook(bookTitle: bookTitle, fallbackReply: result.reply)
+            }
 
         default:
             break
+        }
+    }
+
+    /// 级联查书并每一步更新 aiReply，让用户看到 AI 在做什么
+    /// 流程：当前库 DB → 当前库 AI → 其他库 DB 逐个 → 跨库 AI 兜底
+    @MainActor
+    private func streamingFindBook(bookTitle: String, fallbackReply: String) async {
+        let stored = UserDefaults.standard.integer(forKey: "lastLibraryId")
+        let currentLibraryId: Int? = stored > 0 ? stored : nil
+        let libraries = (try? await NetworkService.shared.fetchLibraries()) ?? []
+        guard !libraries.isEmpty else { return }
+
+        var queue: [Library] = []
+        if let cid = currentLibraryId, let cur = libraries.first(where: { $0.id == cid }) {
+            queue.append(cur)
+            queue.append(contentsOf: libraries.filter { $0.id != cid })
+        } else {
+            queue = libraries
+        }
+
+        var tried: [String] = []
+
+        func appendLine(_ line: String) {
+            if aiReply.isEmpty {
+                aiReply = line
+            } else {
+                aiReply = aiReply + "\n" + line
+            }
+        }
+
+        for (idx, lib) in queue.enumerated() {
+            appendLine("🔍 在《\(lib.name)》查找…")
+            do {
+                // 当前库先 DB，不命中再 AI；其他库只跑 DB 保持节奏
+                let dbOnly = try await NetworkService.shared.findBookSmart(query: bookTitle, libraryId: lib.id, useAI: false)
+                if let book = dbOnly.books.first {
+                    let loc = await Self.locationDescription(for: book, libraryId: lib.id)
+                    let tag = dbOnly.method == "loose" ? "（近似匹配）" : ""
+                    appendLine("✅ \(loc)\(tag)")
+                    return
+                }
+
+                if idx == 0 {
+                    // 当前书库 DB 未命中，启用 AI 兜底
+                    appendLine("当前书库精确/近似都没找到，尝试 AI 模糊匹配…")
+                    let ai = try await NetworkService.shared.findBookSmart(query: bookTitle, libraryId: lib.id, useAI: true)
+                    if let book = ai.books.first {
+                        let loc = await Self.locationDescription(for: book, libraryId: lib.id)
+                        appendLine("✅ AI 模糊匹配到：\(loc)")
+                        return
+                    }
+                    appendLine("当前书库没有这本书，继续去其他书库找…")
+                }
+                tried.append(lib.name)
+            } catch {
+                appendLine("《\(lib.name)》查询失败：\(error.chineseDescription)")
+                tried.append(lib.name)
+            }
+        }
+
+        // 所有库 DB 都没命中，最后做一次跨库 AI 兜底
+        appendLine("所有书库 DB 都没找到，做最后一次跨库 AI 匹配…")
+        do {
+            let cross = try await NetworkService.shared.findBookSmart(query: bookTitle, libraryId: nil, useAI: true)
+            if let book = cross.books.first {
+                let libName = libraries.first(where: { $0.id == book.libraryId })?.name ?? "其他书库"
+                let loc = await Self.locationDescription(for: book, libraryId: book.libraryId)
+                appendLine("✅ AI 在《\(libName)》找到最接近的一本：\(loc)")
+                return
+            }
+        } catch {
+            appendLine("跨库 AI 查询失败：\(error.chineseDescription)")
+        }
+
+        appendLine("😕 所有书库都没找到《\(bookTitle)》")
+        if !fallbackReply.isEmpty {
+            appendLine(fallbackReply)
+        }
+    }
+
+    /// 根据 book 的 locationType/locationId 返回"xxx 在书架/箱子「yyy」"
+    @MainActor
+    private static func locationDescription(for book: Book, libraryId: Int?) async -> String {
+        let title = "《\(book.title)》"
+        switch book.locationType {
+        case .shelf:
+            let shelves = (try? await NetworkService.shared.fetchShelves(libraryId: libraryId)) ?? []
+            let name = shelves.first(where: { $0.id == book.locationId })?.name ?? "未知书架"
+            return "\(title)在书架「\(name)」"
+        case .box:
+            let boxes = (try? await NetworkService.shared.fetchBoxes(libraryId: libraryId)) ?? []
+            let name = boxes.first(where: { $0.id == book.locationId })?.name ?? "未知箱子"
+            return "\(title)在箱子「\(name)」"
+        default:
+            return "\(title)还未归位"
         }
     }
 }
