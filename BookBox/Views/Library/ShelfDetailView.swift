@@ -16,6 +16,14 @@ struct ShelfDetailView: View {
     @State private var editDescription = ""
     @State private var isSaving = false
 
+    @State private var editLibraries: [Library] = []
+    @State private var editLibraryId: Int?
+    @State private var isLoadingEditLibraries = false
+
+    @State private var editRooms: [Room] = []
+    @State private var editRoomId: Int?
+    @State private var isLoadingEditRooms = false
+
     var body: some View {
         Group {
             if isLoading {
@@ -78,6 +86,8 @@ struct ShelfDetailView: View {
                         editName = shelf?.name ?? shelfName
                         editLocation = shelf?.location ?? ""
                         editDescription = shelf?.description ?? ""
+                        editLibraryId = shelf?.libraryId
+                        editRoomId = shelf?.roomId
                         showEdit = true
                     } label: {
                         Label("编辑", systemImage: "pencil")
@@ -105,27 +115,7 @@ struct ShelfDetailView: View {
             )
         }
         .sheet(isPresented: $showEdit) {
-            NavigationStack {
-                Form {
-                    Section("书架信息") {
-                        TextField("书架名称", text: $editName)
-                        TextField("位置（可选）", text: $editLocation)
-                        TextField("备注（可选）", text: $editDescription, axis: .vertical)
-                            .lineLimit(3...6)
-                    }
-                }
-                .navigationTitle("编辑书架")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("取消") { showEdit = false }
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("保存") { updateShelf() }
-                            .disabled(editName.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
-                    }
-                }
-            }
+            editSheet
         }
         .alert("确认删除", isPresented: $showDeleteConfirm) {
             Button("取消", role: .cancel) {}
@@ -148,6 +138,128 @@ struct ShelfDetailView: View {
         }
     }
 
+    private var editSheet: some View {
+        NavigationStack {
+            Form {
+                editInfoSection
+                editPlacementSection
+            }
+            .navigationTitle("编辑书架")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { showEdit = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") { updateShelf() }
+                        .disabled(!canSaveEdit)
+                }
+            }
+            .task { await loadEditOptions() }
+            .onChange(of: editLibraryId) { _, newValue in
+                editRoomId = nil
+                editRooms = []
+                if newValue != nil {
+                    Task { await loadEditRooms(preferred: nil) }
+                }
+            }
+        }
+    }
+
+    private var editInfoSection: some View {
+        Section("书架信息") {
+            TextField("书架名称", text: $editName)
+            TextField("位置（可选）", text: $editLocation)
+            TextField("备注（可选）", text: $editDescription, axis: .vertical)
+                .lineLimit(3...6)
+        }
+    }
+
+    @ViewBuilder
+    private var editPlacementSection: some View {
+        Section("归属") {
+            editLibraryPicker
+            if editLibraryId != nil {
+                editRoomPicker
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var editLibraryPicker: some View {
+        if isLoadingEditLibraries {
+            ProgressView()
+        } else if editLibraries.isEmpty {
+            Text("暂无书库")
+                .foregroundStyle(.secondary)
+        } else {
+            Picker("书库", selection: $editLibraryId) {
+                Text("请选择书库").tag(Int?.none)
+                ForEach(editLibraries) { lib in
+                    Text(lib.name).tag(Int?(lib.id))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var editRoomPicker: some View {
+        if isLoadingEditRooms {
+            ProgressView()
+        } else if editRooms.isEmpty {
+            Text("该书库暂无房间")
+                .foregroundStyle(.secondary)
+        } else {
+            Picker("房间", selection: $editRoomId) {
+                Text("请选择房间").tag(Int?.none)
+                ForEach(editRooms) { room in
+                    Text(room.isDefault ? "\(room.name)（默认）" : room.name)
+                        .tag(Int?(room.id))
+                }
+            }
+        }
+    }
+
+    private var canSaveEdit: Bool {
+        !editName.trimmingCharacters(in: .whitespaces).isEmpty
+            && !isSaving
+            && editLibraryId != nil
+            && editRoomId != nil
+    }
+
+    private func loadEditOptions() async {
+        isLoadingEditLibraries = true
+        do {
+            editLibraries = try await NetworkService.shared.fetchLibraries()
+        } catch {
+            errorMessage = error.chineseDescription
+        }
+        isLoadingEditLibraries = false
+
+        if editLibraryId != nil {
+            await loadEditRooms(preferred: editRoomId)
+        }
+    }
+
+    private func loadEditRooms(preferred: Int?) async {
+        guard let libId = editLibraryId else { return }
+        isLoadingEditRooms = true
+        do {
+            let fetched = try await NetworkService.shared.fetchRooms(libraryId: libId)
+            editRooms = fetched
+            if let pre = preferred, fetched.contains(where: { $0.id == pre }) {
+                editRoomId = pre
+            } else if let def = fetched.first(where: { $0.isDefault }) {
+                editRoomId = def.id
+            } else {
+                editRoomId = fetched.first?.id
+            }
+        } catch {
+            errorMessage = error.chineseDescription
+        }
+        isLoadingEditRooms = false
+    }
+
     private func loadDetail() async {
         isLoading = true
         do {
@@ -168,7 +280,8 @@ struct ShelfDetailView: View {
                         name: editName.trimmingCharacters(in: .whitespaces),
                         location: editLocation.isEmpty ? nil : editLocation,
                         description: editDescription.isEmpty ? nil : editDescription,
-                        libraryId: shelf?.libraryId
+                        libraryId: editLibraryId,
+                        roomId: editRoomId
                     )
                 )
                 shelf = updated
