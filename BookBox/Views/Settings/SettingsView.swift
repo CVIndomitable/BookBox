@@ -3,7 +3,7 @@ import SwiftUI
 /// 设置页 — 地区 / 语音开关 / 连接测试 / 供应商池状态。
 /// AI 供应商配置全部在服务器端（中途岛）管理，iOS 仅读取展示。
 struct SettingsView: View {
-    @AppStorage("voiceControlEnabled") private var voiceControlEnabled = false
+    @AppStorage("assistantMode") private var assistantModeRaw: String = AssistantMode.off.rawValue
     @State private var regionMode: RegionMode = .mainland
     @State private var isLoading = true
     @State private var isSaving = false
@@ -155,11 +155,18 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("应用内语音控制", isOn: $voiceControlEnabled)
+                    Picker("交互方式", selection: Binding(
+                        get: { AssistantMode(rawValue: assistantModeRaw) ?? .off },
+                        set: { assistantModeRaw = $0.rawValue }
+                    )) {
+                        ForEach(AssistantMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
                 } header: {
-                    Text("语音助手")
+                    Text("应用内助手")
                 } footer: {
-                    Text("开启后在主界面显示悬浮麦克风按钮，可通过语音管理书库。关闭后仍可通过 Siri 使用语音指令。")
+                    Text("语音悬浮：右下角悬浮麦克风按钮。文字输入：底部新增\"助手\"Tab，键盘输入指令。关闭后仍可通过 Siri 使用语音指令。")
                 }
 
                 Section {

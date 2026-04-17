@@ -1,8 +1,13 @@
 import SwiftUI
 
-/// 主页 — Tab 导航，包含扫描入口、书库、设置
+/// 主页 — Tab 导航，包含扫描入口、书库、（文字模式下：助手）、设置
 struct HomeView: View {
     @State private var selectedTab = 0
+    @AppStorage("assistantMode") private var assistantModeRaw: String = AssistantMode.off.rawValue
+
+    private var mode: AssistantMode {
+        AssistantMode(rawValue: assistantModeRaw) ?? .off
+    }
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -18,11 +23,19 @@ struct HomeView: View {
                 }
                 .tag(1)
 
+            if mode == .text {
+                AssistantTabView()
+                    .tabItem {
+                        Label("助手", systemImage: "sparkles")
+                    }
+                    .tag(2)
+            }
+
             SettingsView()
                 .tabItem {
                     Label("设置", systemImage: "gearshape")
                 }
-                .tag(2)
+                .tag(3)
         }
     }
 }

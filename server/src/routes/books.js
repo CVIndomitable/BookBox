@@ -36,8 +36,10 @@ async function updateContainerCount(tx, type, id) {
 // 校验位置是否存在
 // 强烈建议传入 tx（事务客户端），避免「校验后但写入前目标被删」的 TOCTOU
 // 窗口；在 Serializable 隔离级别下若并发删除会导致事务冲突，由调用方捕获
+// 校验目标容器存在，并返回其 libraryId（用于把书跨库搬动时同步 libraryId）
+// 返回 null 表示无归属库（容器没设 libraryId）或 locationType 为 none
 async function validateLocation(client, locationType, locationId) {
-  if (!locationType || locationType === 'none' || !locationId) return;
+  if (!locationType || locationType === 'none' || !locationId) return null;
   validateLocationType(locationType);
   if (locationType === 'shelf') {
     const shelf = await client.shelf.findUnique({ where: { id: locationId } });
@@ -46,6 +48,7 @@ async function validateLocation(client, locationType, locationId) {
       err.statusCode = 404;
       throw err;
     }
+    return shelf.libraryId ?? null;
   } else if (locationType === 'box') {
     const box = await client.box.findUnique({ where: { id: locationId } });
     if (!box) {
@@ -53,7 +56,9 @@ async function validateLocation(client, locationType, locationId) {
       err.statusCode = 404;
       throw err;
     }
+    return box.libraryId ?? null;
   }
+  return null;
 }
 
 // 获取书籍列表（支持分页、搜索、按分类/状态/位置筛选）
@@ -484,12 +489,17 @@ router.post('/:id/move', async (req, res, next) => {
 
     await prisma.$transaction(async (tx) => {
       // 事务内校验目标存在，防止校验后、写入前目标被删
-      await validateLocation(tx, toType, targetId);
+      // 同时拿到目标容器的 libraryId，书跨库搬动时同步更新 book.libraryId
+      const targetLibraryId = await validateLocation(tx, toType, targetId);
 
-      // 更新书的位置
+      // 更新书的位置；目标有 libraryId 时顺带把书搬到对应书库
+      const updateData = { locationType: toType, locationId: targetId };
+      if (toType !== 'none' && targetLibraryId) {
+        updateData.libraryId = targetLibraryId;
+      }
       await tx.book.update({
         where: { id },
-        data: { locationType: toType, locationId: targetId },
+        data: updateData,
       });
 
       // 更新旧容器 book_count
