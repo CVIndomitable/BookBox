@@ -200,17 +200,16 @@ router.post('/', async (req, res, next) => {
 });
 
 // 查重：按「书名 + 出版社」精确匹配返回已存在的书
-// 请求体：{ books: [{title, publisher?}], libraryId? }
+// 请求体：{ books: [{title, publisher?}] }
 // 响应：{ duplicates: [{ index, existing: {id, title, publisher, author, libraryId, locationType, locationId} }] }
-// 规则：title 去首尾空白 + 小写后相等；publisher 两侧都为空也算相等
+// 规则：title 去首尾空白 + 小写后相等；publisher 两侧都为空也算相等；跨全部书库查重
 router.post('/check-duplicates', async (req, res, next) => {
   try {
-    const { books, libraryId } = req.body || {};
+    const { books } = req.body || {};
     if (!Array.isArray(books) || books.length === 0) {
       return res.status(400).json({ error: '请提供书籍列表' });
     }
 
-    const libId = parseOptionalId(libraryId);
     const norm = (s) => (s ?? '').toString().trim().toLowerCase();
 
     const titles = Array.from(new Set(books.map((b) => norm(b?.title)).filter(Boolean)));
@@ -222,7 +221,6 @@ router.post('/check-duplicates', async (req, res, next) => {
     const where = {
       OR: titles.map((t) => ({ title: { equals: t } })),
     };
-    if (libId) where.libraryId = libId;
 
     // Prisma 默认 collation 对中文大小写不敏感，title equals 已够用；这里宽松一点用 contains 也能命中，但保持精确
     const candidates = await prisma.book.findMany({
@@ -426,9 +424,16 @@ router.put('/:id', async (req, res, next) => {
     }
 
     const book = await prisma.$transaction(async (tx) => {
-      // 事务内校验目标位置存在
-      if (isMoving && data.locationType !== 'none' && data.locationId) {
-        await validateLocation(tx, data.locationType, data.locationId);
+      // 事务内校验目标位置存在，并同步 libraryId：
+      //   - 有目标容器：取容器的 libraryId
+      //   - 未归位（none）：libraryId 置 null
+      if (isMoving) {
+        if (data.locationType !== 'none' && data.locationId) {
+          const targetLibraryId = await validateLocation(tx, data.locationType, data.locationId);
+          data.libraryId = targetLibraryId ?? null;
+        } else {
+          data.libraryId = null;
+        }
       }
 
       const updated = await tx.book.update({ where: { id }, data });
@@ -549,14 +554,16 @@ router.post('/:id/move', async (req, res, next) => {
 
     await prisma.$transaction(async (tx) => {
       // 事务内校验目标存在，防止校验后、写入前目标被删
-      // 同时拿到目标容器的 libraryId，书跨库搬动时同步更新 book.libraryId
+      // 同时拿到目标容器的 libraryId，用来同步 book.libraryId：
+      //   - 有目标容器：同步到容器所在书库
+      //   - 未归位（none）：libraryId 置 null（没容器就没书库归属）
       const targetLibraryId = await validateLocation(tx, toType, targetId);
 
-      // 更新书的位置；目标有 libraryId 时顺带把书搬到对应书库
-      const updateData = { locationType: toType, locationId: targetId };
-      if (toType !== 'none' && targetLibraryId) {
-        updateData.libraryId = targetLibraryId;
-      }
+      const updateData = {
+        locationType: toType,
+        locationId: targetId,
+        libraryId: toType === 'none' ? null : (targetLibraryId ?? null),
+      };
       await tx.book.update({
         where: { id },
         data: updateData,

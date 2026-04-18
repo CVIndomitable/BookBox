@@ -245,11 +245,8 @@ struct ScanResultView: View {
                 let candidates = selected.map {
                     DuplicateCheckCandidate(title: $0.finalTitle, publisher: nil)
                 }
-                let stored = UserDefaults.standard.integer(forKey: "lastLibraryId")
-                let libraryId: Int? = stored > 0 ? stored : nil
                 let hits = try await NetworkService.shared.checkDuplicates(
-                    candidates: candidates,
-                    libraryId: libraryId
+                    candidates: candidates
                 )
                 if hits.isEmpty {
                     commitSelectedBooks(skipDuplicates: false)
