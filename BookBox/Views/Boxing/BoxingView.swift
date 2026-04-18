@@ -15,7 +15,10 @@ struct BoxingView: View {
                 )
             } else {
                 BoxPickerView(
-                    onPicked: { selectedBox = $0 },
+                    onPicked: { box in
+                        RecentBoxesStore.record(box.id)
+                        selectedBox = box
+                    },
                     onCancel: { dismiss() }
                 )
             }
@@ -25,21 +28,41 @@ struct BoxingView: View {
 
 // MARK: - 箱子选择页
 
-/// 装箱前选箱子：列出所有箱子供选择，或新建一个
+/// 装箱前选箱子：上半「最近使用」+ 下半「按书库查找」，或直接新建
 struct BoxPickerView: View {
     let onPicked: (Box) -> Void
     let onCancel: () -> Void
 
+    @AppStorage("recentBoxCount") private var recentBoxCount: Int = 3
+
     @State private var boxes: [Box] = []
+    @State private var libraries: [Library] = []
+    @State private var rooms: [Room] = []
     @State private var isLoading = true
     @State private var showBoxCreate = false
     @State private var searchText = ""
     @State private var errorMessage: String?
 
+    // 搜索模式下的扁平结果
     private var filteredBoxes: [Box] {
         let q = searchText.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return boxes }
+        guard !q.isEmpty else { return [] }
         return boxes.filter { $0.name.localizedCaseInsensitiveContains(q) }
+    }
+
+    // 最近使用的箱子（按存储顺序，过滤已不存在的，截断到 recentBoxCount）
+    private var recentBoxes: [Box] {
+        let ids = RecentBoxesStore.load()
+        let byId = Dictionary(uniqueKeysWithValues: boxes.map { ($0.id, $0) })
+        let resolved = ids.compactMap { byId[$0] }
+        return Array(resolved.prefix(max(1, min(recentBoxCount, 5))))
+    }
+
+    // 书库聚合（每个书库下的箱子，按房间分组显示）
+    private var librariesWithBoxes: [Library] {
+        libraries.filter { lib in
+            boxes.contains { effectiveLibraryId(of: $0) == lib.id }
+        }
     }
 
     var body: some View {
@@ -58,37 +81,49 @@ struct BoxPickerView: View {
                 }
             } else {
                 List {
-                    Section {
-                        Button {
-                            showBoxCreate = true
-                        } label: {
-                            Label("新建箱子", systemImage: "plus.circle.fill")
-                                .foregroundStyle(Color.accentColor)
-                        }
-                    }
-                    Section("选择已有箱子") {
-                        ForEach(filteredBoxes) { box in
+                    if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+                        Section {
                             Button {
-                                onPicked(box)
+                                showBoxCreate = true
                             } label: {
-                                HStack(spacing: 12) {
-                                    Image(systemName: "shippingbox")
-                                        .foregroundStyle(Color.accentColor)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(box.name)
-                                            .font(.body)
-                                            .foregroundStyle(.primary)
-                                        Text("\(box.bookCount) 本")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption)
-                                        .foregroundStyle(.tertiary)
+                                Label("新建箱子", systemImage: "plus.circle.fill")
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                        }
+
+                        if !recentBoxes.isEmpty {
+                            Section("最近使用") {
+                                ForEach(recentBoxes) { box in
+                                    boxRow(box, subtitle: locationSubtitle(for: box))
                                 }
                             }
-                            .buttonStyle(.plain)
+                        }
+
+                        ForEach(librariesWithBoxes) { lib in
+                            Section(lib.name) {
+                                libraryBoxes(lib)
+                            }
+                        }
+                    } else {
+                        Section {
+                            Button {
+                                showBoxCreate = true
+                            } label: {
+                                Label("新建箱子", systemImage: "plus.circle.fill")
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                        }
+
+                        Section("搜索结果（\(filteredBoxes.count)）") {
+                            if filteredBoxes.isEmpty {
+                                Text("没有匹配的箱子")
+                                    .foregroundStyle(.secondary)
+                                    .font(.callout)
+                            } else {
+                                ForEach(filteredBoxes) { box in
+                                    boxRow(box, subtitle: locationSubtitle(for: box))
+                                }
+                            }
                         }
                     }
                 }
@@ -121,14 +156,151 @@ struct BoxPickerView: View {
         }
     }
 
+    // MARK: - Rows
+
+    @ViewBuilder
+    private func boxRow(_ box: Box, subtitle: String?) -> some View {
+        Button {
+            onPicked(box)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "shippingbox")
+                    .foregroundStyle(Color.accentColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(box.name)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                    if let subtitle, !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func libraryBoxes(_ lib: Library) -> some View {
+        let libBoxes = boxes.filter { effectiveLibraryId(of: $0) == lib.id }
+        let libRooms = rooms.filter { $0.libraryId == lib.id }
+
+        // 先按房间分组；默认房间放在最前，未关联房间的放最后
+        let sortedRooms = libRooms.sorted { a, b in
+            if a.isDefault != b.isDefault { return a.isDefault }
+            return a.name.localizedCompare(b.name) == .orderedAscending
+        }
+
+        ForEach(sortedRooms) { room in
+            let roomBoxes = libBoxes.filter { $0.roomId == room.id }
+            if !roomBoxes.isEmpty {
+                Text(room.name)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(nil)
+                ForEach(roomBoxes) { box in
+                    boxRow(box, subtitle: "\(box.bookCount) 本")
+                }
+            }
+        }
+
+        let orphanBoxes = libBoxes.filter { $0.roomId == nil }
+        if !orphanBoxes.isEmpty {
+            Text("未归入房间")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(nil)
+            ForEach(orphanBoxes) { box in
+                boxRow(box, subtitle: "\(box.bookCount) 本")
+            }
+        }
+    }
+
+    // MARK: - Helpers
+
+    /// 箱子的实际所属书库 id — 优先看 libraryId，否则回退到所在房间的 libraryId
+    private func effectiveLibraryId(of box: Box) -> Int? {
+        if let id = box.libraryId { return id }
+        if let rid = box.roomId {
+            return rooms.first(where: { $0.id == rid })?.libraryId
+        }
+        return nil
+    }
+
+    /// 用于「最近使用」「搜索结果」— 显示 书库 / 房间 · N 本
+    private func locationSubtitle(for box: Box) -> String {
+        var parts: [String] = []
+        if let libId = effectiveLibraryId(of: box),
+           let lib = libraries.first(where: { $0.id == libId }) {
+            parts.append(lib.name)
+        }
+        if let rid = box.roomId,
+           let room = rooms.first(where: { $0.id == rid }) {
+            parts.append(room.name)
+        }
+        parts.append("\(box.bookCount) 本")
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: - 加载
+
     private func load() async {
         isLoading = true
+        async let boxesTask = NetworkService.shared.fetchBoxes()
+        async let librariesTask = NetworkService.shared.fetchLibraries()
+        async let roomsTask = NetworkService.shared.fetchRooms()
         do {
-            boxes = try await NetworkService.shared.fetchBoxes()
+            let (b, l, r) = try await (boxesTask, librariesTask, roomsTask)
+            boxes = b
+            libraries = l.sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+            rooms = r
         } catch {
             errorMessage = "加载箱子列表失败: \(error.chineseDescription)"
         }
         isLoading = false
+    }
+}
+
+// MARK: - 最近使用箱子存储
+
+/// 记录最近选中的箱子 id（去重，按最近在前，最多保留 5 条 —— 设置的上限）
+enum RecentBoxesStore {
+    private static let key = "recentBoxIds"
+    private static let maxCapacity = 5
+
+    static func load() -> [Int] {
+        guard let str = UserDefaults.standard.string(forKey: key),
+              let data = str.data(using: .utf8),
+              let ids = try? JSONDecoder().decode([Int].self, from: data) else {
+            return []
+        }
+        return ids
+    }
+
+    static func record(_ id: Int) {
+        var ids = load()
+        ids.removeAll { $0 == id }
+        ids.insert(id, at: 0)
+        if ids.count > maxCapacity { ids = Array(ids.prefix(maxCapacity)) }
+        save(ids)
+    }
+
+    static func remove(_ id: Int) {
+        var ids = load()
+        ids.removeAll { $0 == id }
+        save(ids)
+    }
+
+    private static func save(_ ids: [Int]) {
+        guard let data = try? JSONEncoder().encode(ids),
+              let str = String(data: data, encoding: .utf8) else { return }
+        UserDefaults.standard.set(str, forKey: key)
     }
 }
 
