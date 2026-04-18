@@ -61,6 +61,18 @@ final class NetworkService: ObservableObject {
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
 
+    private static let iso8601WithFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let iso8601Plain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
     private init() {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
@@ -68,7 +80,20 @@ final class NetworkService: ObservableObject {
         session = URLSession(configuration: config)
 
         decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        // 服务器 Prisma 返回 ISO-8601 带毫秒（如 2026-04-16T08:20:57.558Z），
+        // iOS 18 及以下 .iso8601 策略不支持小数秒会解码失败。自定义兼容两种格式。
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let string = try container.decode(String.self)
+            if let date = NetworkService.iso8601WithFractional.date(from: string)
+                ?? NetworkService.iso8601Plain.date(from: string) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "无法解析日期: \(string)"
+            )
+        }
 
         encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
