@@ -6,8 +6,8 @@ struct VoiceAssistantButton: View {
     @StateObject private var speechService = SpeechService()
     @StateObject private var engine = AssistantEngine()
     @State private var isExpanded = false
-    @GestureState private var dragOffset = CGSize.zero
-    @State private var baseOffset = CGSize.zero
+    @State private var position: CGSize = .zero
+    @State private var dragStart: CGSize? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -15,37 +15,52 @@ struct VoiceAssistantButton: View {
                 expandedPanel
             }
 
-            Button {
-                if isExpanded && !speechService.isRecording && !engine.isProcessing {
-                    isExpanded = false
-                    engine.reset()
-                } else if !isExpanded {
-                    isExpanded = true
-                    speechService.requestAuthorization()
-                }
-            } label: {
-                Image(systemName: speechService.isRecording ? "waveform.circle.fill" : "mic.circle.fill")
-                    .font(.system(size: 52))
-                    .foregroundStyle(speechService.isRecording ? .red : .accentColor)
-                    .background(Circle().fill(.ultraThickMaterial).frame(width: 56, height: 56))
-                    .shadow(radius: 4)
-            }
-            .accessibilityLabel(speechService.isRecording ? "停止录音" : "语音助手")
-            .accessibilityHint(isExpanded ? "点击关闭语音面板" : "点击打开语音助手")
+            micButton
         }
-        .offset(x: baseOffset.width + dragOffset.width, y: baseOffset.height + dragOffset.height)
-        .gesture(
-            DragGesture()
-                .updating($dragOffset) { value, state, _ in
-                    state = value.translation
-                }
-                .onEnded { value in
-                    baseOffset.width += value.translation.width
-                    baseOffset.height += value.translation.height
-                }
-        )
+        .offset(position)
         .onDisappear {
             engine.cancel()
+        }
+    }
+
+    private var micButton: some View {
+        Image(systemName: speechService.isRecording ? "waveform.circle.fill" : "mic.circle.fill")
+            .font(.system(size: 52))
+            .foregroundStyle(speechService.isRecording ? .red : .accentColor)
+            .background(Circle().fill(.ultraThickMaterial).frame(width: 56, height: 56))
+            .shadow(radius: 4)
+            .contentShape(Circle())
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(speechService.isRecording ? "停止录音" : "语音助手")
+            .accessibilityHint(isExpanded ? "点击关闭语音面板" : "点击打开语音助手")
+            .gesture(
+                // minimumDistance: 0 ——手指一按就开始跟踪，拖动立即跟手，无 10pt 起跳
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        if dragStart == nil { dragStart = position }
+                        guard let start = dragStart else { return }
+                        position = CGSize(
+                            width: start.width + value.translation.width,
+                            height: start.height + value.translation.height
+                        )
+                    }
+                    .onEnded { value in
+                        defer { dragStart = nil }
+                        // 位移小于 5pt 视为点击
+                        if hypot(value.translation.width, value.translation.height) < 5 {
+                            handleTap()
+                        }
+                    }
+            )
+    }
+
+    private func handleTap() {
+        if isExpanded && !speechService.isRecording && !engine.isProcessing {
+            isExpanded = false
+            engine.reset()
+        } else if !isExpanded {
+            isExpanded = true
+            speechService.requestAuthorization()
         }
     }
 
