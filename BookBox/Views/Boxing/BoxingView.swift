@@ -1,70 +1,195 @@
 import SwiftUI
 
-/// 装箱模式主界面 — 选择箱子 → 拍照 → 识别校验 → 入箱
+/// 装箱模式主界面 — 先选箱子 → 拍照（后台并发识别，队列显示缩略图）→ 入箱
 struct BoxingView: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var boxes: [Box] = []
     @State private var selectedBox: Box?
-    @State private var showBoxCreate = false
-    @State private var showCamera = false
-    @State private var showPhotoPicker = false
-    @State private var capturedImage: UIImage?
-    @State private var scanResults: [ScanResultItem] = []
-    @State private var isProcessing = false
-    @State private var isLoadingBoxes = true
-    @State private var errorMessage: String?
-    @State private var showPreClassifyImport = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            // 箱子选择区域
-            boxSelector
-
-            Divider()
-
-            // 扫描结果区域
-            if scanResults.isEmpty && !isProcessing {
-                emptyStateView
-            } else if isProcessing {
-                processingView
+        Group {
+            if let box = selectedBox {
+                BoxingSessionView(
+                    box: box,
+                    onSwitchBox: { selectedBox = nil },
+                    onClose: { dismiss() }
+                )
             } else {
-                ScanResultView(
-                    results: $scanResults,
-                    locationType: .box,
-                    locationId: selectedBox?.id
+                BoxPickerView(
+                    onPicked: { selectedBox = $0 },
+                    onCancel: { dismiss() }
                 )
             }
         }
+    }
+}
+
+// MARK: - 箱子选择页
+
+/// 装箱前选箱子：列出所有箱子供选择，或新建一个
+struct BoxPickerView: View {
+    let onPicked: (Box) -> Void
+    let onCancel: () -> Void
+
+    @State private var boxes: [Box] = []
+    @State private var isLoading = true
+    @State private var showBoxCreate = false
+    @State private var searchText = ""
+    @State private var errorMessage: String?
+
+    private var filteredBoxes: [Box] {
+        let q = searchText.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return boxes }
+        return boxes.filter { $0.name.localizedCaseInsensitiveContains(q) }
+    }
+
+    var body: some View {
+        Group {
+            if isLoading {
+                ProgressView("加载箱子...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if boxes.isEmpty {
+                ContentUnavailableView {
+                    Label("还没有箱子", systemImage: "shippingbox")
+                } description: {
+                    Text("新建一个箱子后再开始装箱")
+                } actions: {
+                    Button("新建箱子") { showBoxCreate = true }
+                        .buttonStyle(.borderedProminent)
+                }
+            } else {
+                List {
+                    Section {
+                        Button {
+                            showBoxCreate = true
+                        } label: {
+                            Label("新建箱子", systemImage: "plus.circle.fill")
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+                    Section("选择已有箱子") {
+                        ForEach(filteredBoxes) { box in
+                            Button {
+                                onPicked(box)
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "shippingbox")
+                                        .foregroundStyle(Color.accentColor)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(box.name)
+                                            .font(.body)
+                                            .foregroundStyle(.primary)
+                                        Text("\(box.bookCount) 本")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .listStyle(.insetGrouped)
+                .searchable(text: $searchText, prompt: "搜索箱子")
+            }
+        }
         .navigationTitle("装箱")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button("关闭") {
-                    dismiss()
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button("拍照", systemImage: "camera") {
-                        showCamera = true
-                    }
-                    Button("从相册选取", systemImage: "photo") {
-                        showPhotoPicker = true
-                    }
-                    Button("从预分类导入", systemImage: "list.clipboard") {
-                        showPreClassifyImport = true
-                    }
-                } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title3)
-                }
-                .disabled(selectedBox == nil)
+                Button("关闭") { onCancel() }
             }
         }
         .sheet(isPresented: $showBoxCreate) {
             NavigationStack {
                 BoxCreateView { newBox in
-                    boxes.append(newBox)
-                    selectedBox = newBox
+                    onPicked(newBox)
+                }
+            }
+        }
+        .task { await load() }
+        .alert("错误", isPresented: .init(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("确定") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+        }
+    }
+
+    private func load() async {
+        isLoading = true
+        do {
+            boxes = try await NetworkService.shared.fetchBoxes()
+        } catch {
+            errorMessage = "加载箱子列表失败: \(error.chineseDescription)"
+        }
+        isLoading = false
+    }
+}
+
+// MARK: - 装箱会话
+
+/// 已选箱子后的装箱界面：拍照 → 后台队列识别 → 结果归集入库
+struct BoxingSessionView: View {
+    let box: Box
+    let onSwitchBox: () -> Void
+    let onClose: () -> Void
+
+    @State private var showCamera = false
+    @State private var showPhotoPicker = false
+    @State private var capturedImage: UIImage?
+    @State private var scanResults: [ScanResultItem] = []
+    @State private var recognitionTasks: [RecognitionTask] = []
+    @State private var showPreClassifyImport = false
+    @State private var showSwitchConfirm = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if !recognitionTasks.isEmpty {
+                recognitionQueueStrip
+                Divider()
+            }
+
+            if scanResults.isEmpty && recognitionTasks.isEmpty {
+                emptyStateView
+            } else if scanResults.isEmpty {
+                recognizingPlaceholder
+            } else {
+                ScanResultView(
+                    results: $scanResults,
+                    locationType: .box,
+                    locationId: box.id
+                )
+            }
+        }
+        .navigationTitle("装箱：\(box.name)")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("关闭") { onClose() }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button("拍照", systemImage: "camera") { showCamera = true }
+                    Button("从相册选取", systemImage: "photo") { showPhotoPicker = true }
+                    Button("从预分类导入", systemImage: "list.clipboard") { showPreClassifyImport = true }
+                    Divider()
+                    Button("切换箱子", systemImage: "arrow.triangle.2.circlepath") {
+                        if scanResults.isEmpty && !recognitionTasks.contains(where: { $0.status == .recognizing }) {
+                            onSwitchBox()
+                        } else {
+                            showSwitchConfirm = true
+                        }
+                    }
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title3)
                 }
             }
         }
@@ -79,23 +204,30 @@ struct BoxingView: View {
         .sheet(isPresented: $showPreClassifyImport) {
             PreClassifyImportView { importedBooks in
                 for book in importedBooks {
-                    let item = ScanResultItem(
+                    scanResults.append(ScanResultItem(
                         title: book.title,
                         author: book.author,
                         confidence: book.confidence,
                         isVerifying: false
-                    )
-                    scanResults.append(item)
+                    ))
                 }
             }
         }
         .onChange(of: capturedImage) { _, newImage in
             if let image = newImage {
-                processImage(image)
+                enqueueRecognition(image)
+                capturedImage = nil
             }
         }
-        .task {
-            await loadBoxes()
+        .confirmationDialog("切换箱子", isPresented: $showSwitchConfirm, titleVisibility: .visible) {
+            Button("放弃并切换", role: .destructive) {
+                recognitionTasks.removeAll()
+                scanResults.removeAll()
+                onSwitchBox()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("当前有未入库的识别结果或仍在识别的照片，切换会全部丢弃")
         }
         .alert("错误", isPresented: .init(
             get: { errorMessage != nil },
@@ -107,140 +239,162 @@ struct BoxingView: View {
         }
     }
 
-    private var boxSelector: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                // 新建箱子按钮
-                Button {
-                    showBoxCreate = true
-                } label: {
-                    VStack(spacing: 4) {
-                        Image(systemName: "plus")
-                            .font(.title3)
-                        Text("新建")
-                            .font(.caption)
-                    }
-                    .frame(width: 70, height: 60)
-                    .background(.quaternary)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                }
+    // MARK: - 子视图
 
-                if isLoadingBoxes {
-                    ProgressView()
-                        .frame(width: 70, height: 60)
-                } else {
-                    ForEach(boxes) { box in
-                        Button {
-                            selectedBox = box
-                        } label: {
-                            VStack(spacing: 4) {
-                                Image(systemName: "shippingbox")
-                                    .font(.title3)
-                                Text(box.name)
-                                    .font(.caption)
-                                    .lineLimit(1)
-                            }
-                            .frame(width: 70, height: 60)
-                            .background(selectedBox?.id == box.id ? AnyShapeStyle(Color.accentColor.opacity(0.2)) : AnyShapeStyle(.quaternary))
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(selectedBox?.id == box.id ? Color.accentColor : .clear, lineWidth: 2)
-                            )
-                        }
-                        .tint(.primary)
-                    }
+    private var recognitionQueueStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(recognitionTasks) { task in
+                    recognitionThumbnail(task)
                 }
             }
-            .padding()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+        .background(.thinMaterial)
+    }
+
+    @ViewBuilder
+    private func recognitionThumbnail(_ task: RecognitionTask) -> some View {
+        ZStack {
+            Image(uiImage: task.thumbnail)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 64, height: 64)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            switch task.status {
+            case .recognizing:
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.black.opacity(0.35))
+                    .frame(width: 64, height: 64)
+                ProgressView()
+                    .tint(.white)
+            case .done(let count):
+                VStack {
+                    Spacer()
+                    Text("\(count) 本")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.green.opacity(0.9))
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
+                        .padding(4)
+                }
+                .frame(width: 64, height: 64)
+            case .failed:
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.red.opacity(0.35))
+                    .frame(width: 64, height: 64)
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.white)
+                    .font(.title3)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if task.status != .recognizing {
+                Button {
+                    recognitionTasks.removeAll { $0.id == task.id }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.white, .black.opacity(0.6))
+                }
+                .offset(x: 6, y: -6)
+            }
         }
     }
 
     private var emptyStateView: some View {
         ContentUnavailableView {
-            Label(
-                selectedBox == nil ? "请先选择箱子" : "拍摄书籍",
-                systemImage: selectedBox == nil ? "shippingbox" : "camera.viewfinder"
-            )
+            Label("拍摄书籍", systemImage: "camera.viewfinder")
         } description: {
-            Text(selectedBox == nil
-                 ? "选择一个箱子或新建箱子后开始装箱"
-                 : "拍照后 AI 自动识别书名")
+            Text("拍照后 AI 在后台识别，可连续拍摄多张")
         } actions: {
-            if selectedBox == nil {
-                Button("新建箱子") {
-                    showBoxCreate = true
-                }
+            Button("开始拍照") { showCamera = true }
                 .buttonStyle(.borderedProminent)
-            } else {
-                Button("开始拍照") {
-                    showCamera = true
-                }
-                .buttonStyle(.borderedProminent)
-            }
         }
     }
 
-    private var processingView: some View {
-        VStack(spacing: 16) {
-            ProgressView()
-                .scaleEffect(1.5)
-            Text("AI 正在识别书籍...")
+    private var recognizingPlaceholder: some View {
+        VStack(spacing: 8) {
+            Spacer()
+            Text("正在识别中，可继续拍照")
                 .foregroundStyle(.secondary)
+                .font(.subheadline)
+            Spacer()
         }
-        .frame(maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func loadBoxes() async {
-        isLoadingBoxes = true
-        do {
-            boxes = try await NetworkService.shared.fetchBoxes()
-        } catch {
-            errorMessage = "加载箱子列表失败: \(error.chineseDescription)"
-        }
-        isLoadingBoxes = false
-    }
+    // MARK: - 识别队列
 
-    private func processImage(_ image: UIImage) {
-        guard selectedBox != nil else { return }
-        isProcessing = true
+    private func enqueueRecognition(_ image: UIImage) {
+        let thumb = image.preparingThumbnail(of: CGSize(width: 160, height: 160)) ?? image
+        let task = RecognitionTask(thumbnail: thumb, status: .recognizing)
+        recognitionTasks.append(task)
+        let taskId = task.id
+        let capturedBoxId = box.id
 
-        Task {
-            defer {
-                isProcessing = false
-                capturedImage = nil
+        Task { @MainActor in
+            guard let compressed = compressImageForRecognition(image) else {
+                updateTask(taskId, status: .failed)
+                errorMessage = "图片压缩失败，请重试"
+                return
             }
             do {
-                guard let compressed = compressImageForRecognition(image) else {
-                    errorMessage = "图片压缩失败，请重试"
-                    return
-                }
                 let recognized = try await NetworkService.shared.recognizeBooks(imageData: compressed)
+                // 期间用户可能已切换箱子，此时当前 Session 不再有效
+                guard capturedBoxId == box.id else { return }
+
                 if recognized.isEmpty {
-                    errorMessage = "未识别到书籍，请调整角度或距离后重试"
+                    updateTask(taskId, status: .failed)
+                    errorMessage = "未识别到书籍，请调整角度或距离"
                 } else {
-                    for book in recognized {
-                        let item = ScanResultItem(
-                            title: book.title,
-                            author: book.author,
-                            confidence: book.confidence,
+                    for item in recognized {
+                        scanResults.append(ScanResultItem(
+                            title: item.title,
+                            author: item.author,
+                            confidence: item.confidence,
                             isVerifying: false
-                        )
-                        scanResults.append(item)
+                        ))
                     }
-                    // 保存扫描记录
+                    updateTask(taskId, status: .done(recognized.count))
                     Task {
                         try? await NetworkService.shared.saveScanRecord(
                             mode: .boxing,
-                            boxId: selectedBox?.id,
+                            boxId: capturedBoxId,
                             extractedTitles: recognized.map(\.title)
                         )
                     }
                 }
             } catch {
+                guard capturedBoxId == box.id else { return }
+                updateTask(taskId, status: .failed)
                 errorMessage = "AI 识别失败: \(error.chineseDescription)"
             }
         }
+    }
+
+    private func updateTask(_ id: UUID, status: RecognitionTask.Status) {
+        guard let idx = recognitionTasks.firstIndex(where: { $0.id == id }) else { return }
+        recognitionTasks[idx].status = status
+    }
+}
+
+// MARK: - 识别任务
+
+/// 后台识别任务 — 每一张照片对应一条，支持并发
+struct RecognitionTask: Identifiable {
+    let id = UUID()
+    let thumbnail: UIImage
+    var status: Status
+
+    enum Status: Equatable {
+        case recognizing
+        case done(Int)
+        case failed
     }
 }
 

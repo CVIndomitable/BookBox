@@ -202,7 +202,7 @@ router.post('/', async (req, res, next) => {
 // 查重：按「书名 + 出版社」精确匹配返回已存在的书
 // 请求体：{ books: [{title, publisher?}] }
 // 响应：{ duplicates: [{ index, existing: {id, title, publisher, author, libraryId, locationType, locationId} }] }
-// 规则：title 去首尾空白 + 小写后相等；publisher 两侧都为空也算相等；跨全部书库查重
+// 规则：title 去首尾空白 + 小写后相等；请求未给 publisher 时只按书名匹配（AI 常漏出版社）；跨全部书库查重
 router.post('/check-duplicates', async (req, res, next) => {
   try {
     const { books } = req.body || {};
@@ -242,7 +242,12 @@ router.post('/check-duplicates', async (req, res, next) => {
       const nt = norm(b?.title);
       const np = norm(b?.publisher);
       if (!nt) return;
-      const hit = candidates.find((c) => norm(c.title) === nt && norm(c.publisher) === np);
+      // 请求侧没给 publisher：只按 title 判重（AI 识别常拿不到出版社，此时宁可多提醒）
+      const hit = candidates.find((c) => {
+        if (norm(c.title) !== nt) return false;
+        if (!np) return true;
+        return norm(c.publisher) === np;
+      });
       if (hit) duplicates.push({ index, existing: hit });
     });
 
