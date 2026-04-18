@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// 主页 — Tab 导航，包含扫描入口、书库、（文字模式下：助手）、设置
+/// 主页 — Tab 导航，包含扫描入口、书库、（文字模式下：助手）、（开启时：查重）、设置
 struct HomeView: View {
     @State private var selectedTab = 0
     @AppStorage("assistantMode") private var assistantModeRaw: String = AssistantMode.off.rawValue
+    @AppStorage("duplicateTabEnabled") private var duplicateTabEnabled: Bool = false
 
     private var mode: AssistantMode {
         AssistantMode(rawValue: assistantModeRaw) ?? .off
@@ -29,6 +30,14 @@ struct HomeView: View {
                         Label("助手", systemImage: "sparkles")
                     }
                     .tag(2)
+            }
+
+            if duplicateTabEnabled {
+                DuplicateCheckView()
+                    .tabItem {
+                        Label("查重", systemImage: "doc.on.doc")
+                    }
+                    .tag(4)
             }
 
             SettingsView()

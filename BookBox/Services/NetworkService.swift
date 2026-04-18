@@ -385,6 +385,11 @@ final class NetworkService: ObservableObject {
         return resp.duplicates
     }
 
+    /// 全库查重：扫描所有书，返回重复分组
+    func fetchLibraryDuplicates() async throws -> DuplicateLibraryResponse {
+        try await request("GET", path: "/books/duplicates", timeout: 30)
+    }
+
     func fetchBook(id: Int) async throws -> Book {
         try await request("GET", path: "/books/\(id)")
     }

@@ -122,3 +122,21 @@ struct DuplicateHit: Codable {
         let locationId: Int?
     }
 }
+
+/// 全库查重分组：一组 title+publisher 完全一致的重复书
+struct DuplicateGroup: Codable, Identifiable {
+    let title: String
+    let publisher: String?
+    let count: Int
+    let books: [Book]
+
+    /// 用 title + publisher 作为分组标识
+    var id: String { "\(title)\u{0000}\(publisher ?? "")" }
+}
+
+/// 全库查重响应
+struct DuplicateLibraryResponse: Codable {
+    let groups: [DuplicateGroup]
+    let totalGroups: Int
+    let totalDuplicateBooks: Int
+}

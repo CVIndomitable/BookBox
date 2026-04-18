@@ -5,6 +5,7 @@ import SwiftUI
 struct SettingsView: View {
     @AppStorage("assistantMode") private var assistantModeRaw: String = AssistantMode.off.rawValue
     @AppStorage("duplicateCheckEnabled") private var duplicateCheckEnabled: Bool = false
+    @AppStorage("duplicateTabEnabled") private var duplicateTabEnabled: Bool = false
     @State private var regionMode: RegionMode = .mainland
     @State private var isLoading = true
     @State private var isSaving = false
@@ -172,10 +173,11 @@ struct SettingsView: View {
 
                 Section {
                     Toggle("加书时查重", isOn: $duplicateCheckEnabled)
+                    Toggle("显示「查重」Tab", isOn: $duplicateTabEnabled)
                 } header: {
                     Text("查重")
                 } footer: {
-                    Text("打开后，任何模式下往书库添加书籍时，若已存在书名与出版社完全一致的书将提醒。默认关闭。")
+                    Text("加书时查重：添加书籍时若已存在书名与出版社完全一致的书将提醒。\n显示「查重」Tab：在底部增加「查重」模块，一键扫描已录入书库的全部重复书。两项均默认关闭。")
                 }
 
                 Section {

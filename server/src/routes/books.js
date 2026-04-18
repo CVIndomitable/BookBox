@@ -253,6 +253,81 @@ router.post('/check-duplicates', async (req, res, next) => {
   }
 });
 
+// 全库查重：扫描所有书，按「书名 + 出版社」分组，返回存在重复（count >= 2）的分组
+// 必须声明在 /:id 之前，避免被通配路由捕获
+// 规则：title/publisher 去首尾空白 + 小写后相等；publisher 两侧都为空也算相等
+// 响应：{
+//   groups: [{ title, publisher, count, books: [{id,title,publisher,author,libraryId,locationType,locationId,coverUrl,verifyStatus,createdAt}] }],
+//   totalGroups, totalDuplicateBooks
+// }
+router.get('/duplicates', async (req, res, next) => {
+  try {
+    const norm = (s) => (s ?? '').toString().trim().toLowerCase();
+
+    // 一次性拉全量书（只取查重所需字段），按分组逻辑在内存里聚合
+    // 注：当前场景量级不大；若将来几十万本可改用 SQL GROUP BY
+    const all = await prisma.book.findMany({
+      select: {
+        id: true,
+        title: true,
+        publisher: true,
+        author: true,
+        libraryId: true,
+        locationType: true,
+        locationId: true,
+        coverUrl: true,
+        verifyStatus: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const groupsMap = new Map();
+    for (const b of all) {
+      const nt = norm(b.title);
+      if (!nt) continue; // 空书名不参与查重
+      const np = norm(b.publisher);
+      const key = `${nt}\u0000${np}`;
+      if (!groupsMap.has(key)) {
+        groupsMap.set(key, {
+          title: b.title,
+          publisher: b.publisher ?? null,
+          books: [],
+        });
+      }
+      groupsMap.get(key).books.push(b);
+    }
+
+    const groups = [];
+    let totalDuplicateBooks = 0;
+    for (const g of groupsMap.values()) {
+      if (g.books.length < 2) continue;
+      totalDuplicateBooks += g.books.length;
+      groups.push({
+        title: g.title,
+        publisher: g.publisher,
+        count: g.books.length,
+        books: g.books,
+      });
+    }
+
+    // 重复最多的排前面；同等数量按书名排序方便人眼浏览
+    groups.sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return a.title.localeCompare(b.title, 'zh-CN');
+    });
+
+    res.json({
+      groups,
+      totalGroups: groups.length,
+      totalDuplicateBooks,
+    });
+  } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
+    next(err);
+  }
+});
+
 // 书籍联网校验（豆瓣/Google Books/Open Library）
 // 必须声明在 /:id 之前，避免被通配路由捕获
 router.post('/verify', async (req, res, next) => {
