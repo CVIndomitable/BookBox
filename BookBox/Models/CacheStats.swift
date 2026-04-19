@@ -9,6 +9,5 @@ struct CacheStats: Codable {
     let cacheSize: Int
     let activeEntries: Int
     let maxSize: Int
-    let ttlMinutes: Int
     let startedAt: String
 }

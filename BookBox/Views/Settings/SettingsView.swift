@@ -192,13 +192,12 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    DisclosureGroup("语音缓存统计") {
+                    DisclosureGroup("AI 缓存统计") {
                         if let stats = cacheStats {
                             LabeledContent("命中次数", value: "\(stats.hits)")
                             LabeledContent("未命中次数", value: "\(stats.misses)")
                             LabeledContent("命中率", value: stats.hitRate)
                             LabeledContent("缓存条目", value: "\(stats.activeEntries)/\(stats.maxSize)")
-                            LabeledContent("过期时间", value: "\(stats.ttlMinutes) 分钟")
 
                             Button(role: .destructive) {
                                 resetCacheStats()

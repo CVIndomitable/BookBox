@@ -5,10 +5,12 @@ import { callWithFallback } from '../utils/llmPool.js';
 
 const router = Router();
 
-// ---- 语音指令缓存 ----
-// key: 归一化后的文本，value: { result, createdAt }
+// ---- AI 指令映射缓存 ----
+// 缓存的是"用户的话 → AI 的语义解析"这层映射（action / bookTitle / target 等），不带过期时间。
+// 不缓存书的存在性——命中缓存后仍由调用方用 DB 查一遍，书被删/被挪都能立刻反映。
+// 只缓存只读指令（query/search/list/count），变更指令不进缓存。
+// key: 归一化文本 + 上下文指纹，value: { result, createdAt }（createdAt 仅用于 FIFO 淘汰顺序）
 const voiceCache = new Map();
-const CACHE_TTL = 3600_000; // 1 小时过期
 const MAX_CACHE_SIZE = 500;
 
 // ---- 缓存命中率统计（持久化） ----
@@ -57,15 +59,6 @@ loadCacheStats();
 
 function normalizeText(text) {
   return text.trim().replace(/\s+/g, '').toLowerCase();
-}
-
-function cleanExpiredCache() {
-  const now = Date.now();
-  for (const [key, entry] of voiceCache) {
-    if (now - entry.createdAt > CACHE_TTL) {
-      voiceCache.delete(key);
-    }
-  }
 }
 
 // 清理 markdown 包裹的 JSON，并尽量从混入的解释性文字里抽出首个 JSON 块
@@ -296,7 +289,7 @@ router.post('/voice-command', async (req, res, next) => {
     const cacheKey = normalizeText(text) + '|' + contextHash;
     if (!noCache) {
       const cached = voiceCache.get(cacheKey);
-      if (cached && Date.now() - cached.createdAt < CACHE_TTL) {
+      if (cached) {
         cacheStats.hits++;
         scheduleFlush();
         return res.json({ ...cached.result, cached: true });
@@ -326,12 +319,10 @@ router.post('/voice-command', async (req, res, next) => {
     // 仅缓存只读查询，变更指令不缓存
     const readOnlyActions = ['query', 'search', 'list', 'count'];
     if (result.action && readOnlyActions.includes(result.action)) {
+      // FIFO 淘汰：Map 按插入顺序迭代，超限时直接踢最早插入的一条
       if (voiceCache.size >= MAX_CACHE_SIZE) {
-        cleanExpiredCache();
-        if (voiceCache.size >= MAX_CACHE_SIZE) {
-          const oldest = voiceCache.keys().next().value;
-          voiceCache.delete(oldest);
-        }
+        const oldest = voiceCache.keys().next().value;
+        voiceCache.delete(oldest);
       }
       // 缓存时剥离 supplier，避免命中缓存时对应的供应商已切换
       const { supplier: _, ...cacheable } = result;
@@ -503,21 +494,14 @@ router.get('/cache-stats', (req, res) => {
   const total = cacheStats.hits + cacheStats.misses;
   const hitRate = total > 0 ? ((cacheStats.hits / total) * 100).toFixed(1) : '0.0';
 
-  const now = Date.now();
-  let activeEntries = 0;
-  for (const entry of voiceCache.values()) {
-    if (now - entry.createdAt < CACHE_TTL) activeEntries++;
-  }
-
   res.json({
     hits: cacheStats.hits,
     misses: cacheStats.misses,
     total,
     hitRate: `${hitRate}%`,
     cacheSize: voiceCache.size,
-    activeEntries,
+    activeEntries: voiceCache.size,
     maxSize: MAX_CACHE_SIZE,
-    ttlMinutes: CACHE_TTL / 60000,
     startedAt: new Date(cacheStats.startedAt).toISOString(),
   });
 });
