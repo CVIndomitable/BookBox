@@ -11,6 +11,7 @@
 		076267F260B8D10AB080C00B /* FindBookIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A63346701C62586F6AA3F3B /* FindBookIntent.swift */; };
 		0A11986FFF9905C1914C1A09 /* ShelfAddBooksSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29E808E11FA34400AFA6AD47 /* ShelfAddBooksSheet.swift */; };
 		0ACAB1E6409E5BB131899F6D /* Box.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C521194F6F1CD605D154F84 /* Box.swift */; };
+		0DF526B88F614E6C62D11D22 /* AppConfig-Dev.swift in Sources */ = {isa = PBXBuildFile; fileRef = F42B0EEF1DAAB1A0186468CA /* AppConfig-Dev.swift */; };
 		110393060CAE1D7D651DA973 /* RoomDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CFB9CC6A3C89D8076633971 /* RoomDetailView.swift */; };
 		11CBC4F2609828127402EADF /* OCRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17DADC7179D9ECB375C20145 /* OCRService.swift */; };
 		16FA5ED259602EA726D33165 /* BookRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81F13D92E33A90BA5207F989 /* BookRow.swift */; };
@@ -125,6 +126,7 @@
 		EED0CB6242E5F30975885FE8 /* RoomCreateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomCreateView.swift; sourceTree = "<group>"; };
 		F1BC538AB120A3BB8093B3C9 /* Book.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Book.swift; sourceTree = "<group>"; };
 		F2317C0236D5B7A3E34BF975 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F42B0EEF1DAAB1A0186468CA /* AppConfig-Dev.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppConfig-Dev.swift"; sourceTree = "<group>"; };
 		F8B214D41FFCC391ADF9B7AA /* MoveBookIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoveBookIntent.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -141,6 +143,7 @@
 		1E86B6930CA8D30873C43496 /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				F42B0EEF1DAAB1A0186468CA /* AppConfig-Dev.swift */,
 				37EE56E29F96C5D1E3C3D93C /* AppConfig.swift */,
 				F1BC538AB120A3BB8093B3C9 /* Book.swift */,
 				D8DAAB00E696C7DA8769C3CD /* BookLog.swift */,
@@ -369,6 +372,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F7EEFBABD812061AF70EB2D2 /* AIModels.swift in Sources */,
+				0DF526B88F614E6C62D11D22 /* AppConfig-Dev.swift in Sources */,
 				1727361B535858399FC67DBB /* AppConfig.swift in Sources */,
 				269BF96F6AB3C9B7ED5AFEEA /* AssistantEngine.swift in Sources */,
 				A8D63C23076FBFA3A75186EC /* AssistantTabView.swift in Sources */,
@@ -433,7 +437,7 @@
 		3E422EA55D9AC1DF66A3F40A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_FILE = BookBox/Info.plist;
@@ -441,9 +445,10 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.bookbox.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bookbox.app.dev;
 				SDKROOT = iphoneos;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEV;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
@@ -519,6 +524,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.bookbox.app;
 				SDKROOT = iphoneos;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
 				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;

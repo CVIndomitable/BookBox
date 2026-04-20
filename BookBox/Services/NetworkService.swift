@@ -51,11 +51,11 @@ final class NetworkService: ObservableObject {
 
     @Published var isLoading = false
 
-    /// 服务器地址（硬编码）
-    let baseURL = AppConfig.serverBaseURL
+    /// 服务器地址（根据编译配置切换）
+    let baseURL = AppConfig.current.serverBaseURL
 
-    /// 认证 token（硬编码）
-    let apiToken = AppConfig.apiToken
+    /// 认证 token（根据编译配置切换）
+    let apiToken = AppConfig.current.apiToken
 
     private let session: URLSession
     private let decoder: JSONDecoder
