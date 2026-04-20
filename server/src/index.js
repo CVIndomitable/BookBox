@@ -16,7 +16,11 @@ import libraryRouter from './routes/library.js';
 import librariesRouter from './routes/libraries.js';
 import llmRouter from './routes/llm.js';
 import suppliersRouter from './routes/suppliers.js';
+import authRouter from './routes/auth.js';
+import libraryMembersRouter from './routes/library-members.js';
+import sunRemindersRouter from './routes/sun-reminders.js';
 import { pingSupplier } from './utils/llmPool.js';
+import { initAPNs, startSunReminderScheduler } from './services/push-notification.js';
 
 // 启动时检查关键环境变量
 if (!process.env.DATABASE_URL) {
@@ -82,7 +86,10 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// 认证中间件
+// 认证相关路由（无需旧的 authMiddleware）
+app.use('/api/auth', authRouter);
+
+// 认证中间件（旧的 API Token 方式，保持向后兼容）
 app.use('/api', authMiddleware);
 
 // 详细健康检查（需要认证）— 检测服务器、数据库、AI 供应商池
@@ -162,6 +169,8 @@ app.use('/api/library', libraryRouter);
 app.use('/api/libraries', librariesRouter);
 app.use('/api/llm', llmRouter);
 app.use('/api/suppliers', suppliersRouter);
+app.use('/api/library-members', libraryMembersRouter);
+app.use('/api/sun-reminders', sunRemindersRouter);
 
 // 全局错误处理
 app.use((err, req, res, next) => {
@@ -187,6 +196,10 @@ app.use((err, req, res, next) => {
 
 const server = app.listen(PORT, () => {
   console.log(`BookBox 服务器已启动，端口: ${PORT}`);
+
+  // 初始化 APNs 和晒书提醒定时任务
+  initAPNs();
+  startSunReminderScheduler();
 });
 
 // 优雅关闭：断开数据库连接
