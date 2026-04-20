@@ -3,6 +3,8 @@ import { AuthProvider, useAuth } from './hooks/useAuth';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Home from './pages/Home';
+import LibraryDetail from './pages/LibraryDetail';
+import SunReminders from './pages/SunReminders';
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
@@ -32,6 +34,8 @@ export default function App() {
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
           <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
           <Route path="/" element={<PrivateRoute><Home /></PrivateRoute>} />
+          <Route path="/library/:id" element={<PrivateRoute><LibraryDetail /></PrivateRoute>} />
+          <Route path="/reminders" element={<PrivateRoute><SunReminders /></PrivateRoute>} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </AuthProvider>

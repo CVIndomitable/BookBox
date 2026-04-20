@@ -48,6 +48,9 @@ export default function Home() {
       <header className="header">
         <h1>BookBox</h1>
         <div className="user-info">
+          <button onClick={() => navigate('/reminders')} className="btn-secondary">
+            晒书提醒
+          </button>
           <span>{user.displayName || user.username}</span>
           <button onClick={logout} className="btn-secondary">退出</button>
         </div>

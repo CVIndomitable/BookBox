@@ -706,4 +706,69 @@ router.get('/:id/logs', async (req, res, next) => {
   }
 });
 
+// 批量导入书籍
+router.post('/batch-import', async (req, res, next) => {
+  try {
+    const { books } = req.body;
+
+    if (!Array.isArray(books) || books.length === 0) {
+      return res.status(400).json({ error: '请提供书籍列表' });
+    }
+
+    const created = [];
+    for (const bookData of books) {
+      if (!bookData.title) continue;
+
+      const book = await prisma.book.create({
+        data: {
+          title: bookData.title,
+          author: bookData.author || null,
+          isbn: bookData.isbn || null,
+          publisher: bookData.publisher || null,
+          libraryId: bookData.libraryId || null,
+          locationType: bookData.locationType || 'none',
+          locationId: bookData.locationId || null,
+          verifyStatus: bookData.verifyStatus || 'manual'
+        }
+      });
+
+      created.push(book);
+    }
+
+    res.json({ count: created.length, books: created });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 导出书籍为 CSV
+router.get('/export', async (req, res, next) => {
+  try {
+    const { libraryId } = req.query;
+    const where = {};
+
+    if (libraryId) {
+      where.libraryId = parseInt(libraryId);
+    }
+
+    const booksList = await prisma.book.findMany({
+      where,
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const csv = [
+      '书名,作者,ISBN,出版社,位置类型,位置ID',
+      ...booksList.map(book =>
+        `"${book.title}","${book.author || ''}","${book.isbn || ''}","${book.publisher || '"}","${book.locationType}","${book.locationId || ''}"`
+      )
+    ].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="books-${Date.now()}.csv"`);
+    res.send('\uFEFF' + csv); // BOM for Excel
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;
