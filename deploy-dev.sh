@@ -17,17 +17,17 @@ ssh ${USER}@${SERVER} << 'ENDSSH'
 cd /home/bookbox-dev
 
 # 安装依赖
-npm install --production
+npm install --omit=dev --no-audit --no-fund
 
-# 复制开发环境配置
-cp .env.dev .env
+# 首次部署时才写 .env（避免覆盖服务器上已有的正确密码）
+[ -f .env ] || cp .env.dev .env
 
-# 数据库迁移
-npx prisma migrate deploy
+# 同步 schema（项目无 migrations/ 目录，用 db push）
+npx prisma db push --skip-generate
 npx prisma generate
 
-# 重启 PM2 服务
-pm2 restart bookbox-dev || pm2 start src/index.js --name bookbox-dev
+# 重启 systemd 服务
+systemctl restart bookbox-dev
 
 echo "✅ 开发环境部署完成"
 ENDSSH
