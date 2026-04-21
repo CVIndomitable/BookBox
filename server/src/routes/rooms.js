@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import prisma from '../utils/prisma.js';
 import { parseId, parseOptionalId } from '../utils/validate.js';
+import { handleTxConflict } from '../services/bookLocation.js';
 
 const router = Router();
 
@@ -113,12 +114,13 @@ router.delete('/:id', async (req, res, next) => {
       return res.status(400).json({ error: '默认房间不能删除' });
     }
 
-    const defaultRoom = await prisma.room.findFirst({
-      where: { libraryId: room.libraryId, isDefault: true },
-    });
-
-    await prisma.$transaction(async (tx) => {
-      if (defaultRoom) {
+    // 默认房间的查询放到事务内，避免「查到默认房间后、转移前被并发删除」
+    // 导致 shelf/box 指向不存在的房间。Serializable 隔离保证读写可串行化。
+    const movedToRoomId = await prisma.$transaction(async (tx) => {
+      const defaultRoom = await tx.room.findFirst({
+        where: { libraryId: room.libraryId, isDefault: true },
+      });
+      if (defaultRoom && defaultRoom.id !== id) {
         await tx.shelf.updateMany({
           where: { roomId: id },
           data: { roomId: defaultRoom.id },
@@ -128,17 +130,19 @@ router.delete('/:id', async (req, res, next) => {
           data: { roomId: defaultRoom.id },
         });
       } else {
-        // 兜底：没有默认房间，置空
+        // 兜底：没有默认房间（通常不该发生），置空
         await tx.shelf.updateMany({ where: { roomId: id }, data: { roomId: null } });
         await tx.box.updateMany({ where: { roomId: id }, data: { roomId: null } });
       }
       await tx.room.delete({ where: { id } });
-    });
+      return defaultRoom?.id ?? null;
+    }, { isolationLevel: 'Serializable' });
 
-    res.json({ message: '房间已删除', movedToRoomId: defaultRoom?.id ?? null });
+    res.json({ message: '房间已删除', movedToRoomId });
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     if (err.code === 'P2025') return res.status(404).json({ error: '房间不存在' });
+    if (handleTxConflict(res, err)) return;
     next(err);
   }
 });
