@@ -6,23 +6,42 @@ import { authenticate, checkLibraryAccess } from '../middleware/auth.js';
 const router = Router();
 
 // 获取当前用户可访问的书库列表
+// bookCount 按"容器 bookCount 之和 + 未归位"计算，保持每库独立且与总览口径一致
 router.get('/', authenticate, async (req, res, next) => {
   try {
     const memberships = await prisma.libraryMember.findMany({
       where: { userId: req.user.id },
       include: {
         library: {
-          include: { _count: { select: { books: true } } }
-        }
+          include: {
+            shelves: { select: { bookCount: true } },
+            boxes: { select: { bookCount: true } },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' }
     });
 
+    const libraryIds = memberships.map((m) => m.library.id);
+    const unlocatedCounts = libraryIds.length > 0
+      ? await prisma.book.groupBy({
+          by: ['libraryId'],
+          where: { libraryId: { in: libraryIds }, locationType: 'none' },
+          _count: { _all: true },
+        })
+      : [];
+    const unlocatedMap = new Map(
+      unlocatedCounts.map((r) => [r.libraryId, r._count._all])
+    );
+
     const result = memberships.map((m) => {
-      const { _count, ...rest } = m.library;
+      const { shelves, boxes, ...rest } = m.library;
+      const shelfSum = shelves.reduce((a, s) => a + (s.bookCount || 0), 0);
+      const boxSum = boxes.reduce((a, b) => a + (b.bookCount || 0), 0);
+      const unlocated = unlocatedMap.get(m.library.id) || 0;
       return {
         ...rest,
-        bookCount: _count.books,
+        bookCount: shelfSum + boxSum + unlocated,
         role: m.role
       };
     });
@@ -75,8 +94,8 @@ router.get('/:id', authenticate, checkLibraryAccess('member'), async (req, res, 
       return res.status(404).json({ error: '书库不存在' });
     }
 
-    const [totalBooks, unlocated, rooms, shelves, boxes] = await Promise.all([
-      prisma.book.count({ where: { libraryId: id } }),
+    // totalBooks 严格按书库独立：取显示的 shelves/boxes.bookCount 之和 + 本库未归位
+    const [unlocated, rooms, shelves, boxes] = await Promise.all([
       prisma.book.count({ where: { libraryId: id, locationType: 'none' } }),
       prisma.room.findMany({
         where: { libraryId: id },
@@ -94,6 +113,10 @@ router.get('/:id', authenticate, checkLibraryAccess('member'), async (req, res, 
         orderBy: { createdAt: 'desc' },
       }),
     ]);
+
+    const shelfSum = shelves.reduce((a, s) => a + (s.bookCount || 0), 0);
+    const boxSum = boxes.reduce((a, b) => a + (b.bookCount || 0), 0);
+    const totalBooks = shelfSum + boxSum + unlocated;
 
     res.json({
       ...library,

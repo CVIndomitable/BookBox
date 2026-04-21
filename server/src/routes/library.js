@@ -5,15 +5,15 @@ import { parseOptionalId } from '../utils/validate.js';
 const router = Router();
 
 // 书库总览（支持按 libraryId 筛选）
+// 注意：totalBooks 必须严格按书库独立计算 —— 由显示出的 shelves/boxes.bookCount
+// 之和 + 本库未归位书籍构成。不使用 book.libraryId 作为统计依据，避免历史数据
+// 中 book.libraryId 与实际容器归属漂移时导致跨库计数
 router.get('/overview', async (req, res, next) => {
   try {
     const libraryId = parseOptionalId(req.query.libraryId);
-    const bookWhere = libraryId ? { libraryId } : {};
     const containerWhere = libraryId ? { libraryId } : {};
 
-    const [totalBooks, unlocated, rooms, shelves, boxes] = await Promise.all([
-      prisma.book.count({ where: bookWhere }),
-      prisma.book.count({ where: { ...bookWhere, locationType: 'none' } }),
+    const [rooms, shelves, boxes] = await Promise.all([
       libraryId
         ? prisma.room.findMany({
             where: { libraryId },
@@ -44,6 +44,16 @@ router.get('/overview', async (req, res, next) => {
         orderBy: { createdAt: 'desc' },
       }),
     ]);
+
+    // 未归位：仅统计 book.libraryId=当前库 且 locationType='none' 的书；未选库时统计全部未归位
+    const unlocatedWhere = libraryId
+      ? { libraryId, locationType: 'none' }
+      : { locationType: 'none' };
+    const unlocated = await prisma.book.count({ where: unlocatedWhere });
+
+    const shelfSum = shelves.reduce((a, s) => a + (s.bookCount || 0), 0);
+    const boxSum = boxes.reduce((a, b) => a + (b.bookCount || 0), 0);
+    const totalBooks = shelfSum + boxSum + unlocated;
 
     res.json({ totalBooks, unlocated, rooms, shelves, boxes });
   } catch (err) {
