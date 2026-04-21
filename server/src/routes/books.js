@@ -711,7 +711,7 @@ router.get('/export', async (req, res, next) => {
     const csv = [
       '书名,作者,ISBN,出版社,位置类型,位置ID',
       ...booksList.map(book =>
-        `"${book.title}","${book.author || ''}","${book.isbn || ''}","${book.publisher || '"}","${book.locationType}","${book.locationId || ''}"`
+        `"${book.title}","${book.author || ''}","${book.isbn || ''}","${book.publisher || ''}","${book.locationType}","${book.locationId || ''}"`
       )
     ].join('\n');
 
