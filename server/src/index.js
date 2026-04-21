@@ -4,6 +4,7 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import prisma from './utils/prisma.js';
 import { authMiddleware } from './middleware/auth.js';
+import { idempotencyMiddleware } from './middleware/idempotency.js';
 import boxesRouter from './routes/boxes.js';
 import booksRouter from './routes/books.js';
 import categoriesRouter from './routes/categories.js';
@@ -47,14 +48,17 @@ app.use(cors({
     return cb(new Error(`跨域来源不被允许: ${origin}`));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
 }));
 
-// 请求体大小限制：
-// - 默认 1MB 足够承载结构化 JSON；
-// - /api/llm/recognize 单独放到 10MB，用于承载 base64 图片（压缩后约 500KB–2MB 为常态，上限留足）。
-// 先注册具体路径的大上限解析器，再注册全局；首个解析成功后 express.json 的后续调用是 no-op。
+// 请求体大小限制（按路由按需放宽；首个 express.json 解析成功后后续调用是 no-op）：
+// - /api/llm/recognize: 10MB（承载 base64 图片；压缩后常态 500KB–2MB，上限留足）
+// - /api/books:         2MB（批量新增与含 rawOcrText 的写入可能偏大）
+// - 其它所有 /api/*:    1MB（结构化 JSON 够用）
+// 审计：剩余路由（rooms/shelves/boxes/categories/libraries/logs/scans/settings/suppliers
+// /llm/voice-command/llm/find-book/auth）均为小 JSON，无需单设上限。
 app.use('/api/llm/recognize', express.json({ limit: '10mb' }));
+app.use('/api/books', express.json({ limit: '2mb' }));
 app.use(express.json({ limit: '1mb' }));
 
 // 全局速率限制
@@ -84,6 +88,10 @@ app.get('/api/health', (req, res) => {
 
 // 认证中间件
 app.use('/api', authMiddleware);
+
+// 请求去重（基于 X-Request-Id，仅拦截 POST/PUT/DELETE）
+// 应在认证之后、业务路由之前；CORS 头已在前面配置允许该头
+app.use('/api', idempotencyMiddleware);
 
 // 详细健康检查（需要认证）— 检测服务器、数据库、AI 供应商池
 app.get('/api/health/detailed', async (req, res) => {

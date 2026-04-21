@@ -2,64 +2,18 @@ import { Router } from 'express';
 import prisma from '../utils/prisma.js';
 import { parseId, parseOptionalId, parsePagination, paginationResponse } from '../utils/validate.js';
 import { verifyBook } from '../services/search/bookVerifier.js';
+import {
+  validateLocationType,
+  validateLocation,
+  updateContainerCount,
+  batchResolveLocationInfo,
+  handleTxConflict,
+} from '../services/bookLocation.js';
 
 const router = Router();
 
 // 合法的地区模式
 const VALID_REGIONS = ['mainland', 'overseas'];
-
-// 合法的位置类型
-const VALID_LOCATION_TYPES = ['none', 'shelf', 'box'];
-
-// 校验位置类型枚举值
-function validateLocationType(value) {
-  if (value && !VALID_LOCATION_TYPES.includes(value)) {
-    const err = new Error(`无效的位置类型: ${value}，合法值为 none/shelf/box`);
-    err.statusCode = 400;
-    throw err;
-  }
-}
-
-// 更新容器的 book_count（辅助函数，始终用 COUNT 重算）
-async function updateContainerCount(tx, type, id) {
-  if (!type || !id || type === 'none') return;
-  const count = await tx.book.count({
-    where: { locationType: type, locationId: id },
-  });
-  if (type === 'shelf') {
-    await tx.shelf.update({ where: { id }, data: { bookCount: count } });
-  } else if (type === 'box') {
-    await tx.box.update({ where: { id }, data: { bookCount: count } });
-  }
-}
-
-// 校验位置是否存在
-// 强烈建议传入 tx（事务客户端），避免「校验后但写入前目标被删」的 TOCTOU
-// 窗口；在 Serializable 隔离级别下若并发删除会导致事务冲突，由调用方捕获
-// 校验目标容器存在，并返回其 libraryId（用于把书跨库搬动时同步 libraryId）
-// 返回 null 表示无归属库（容器没设 libraryId）或 locationType 为 none
-async function validateLocation(client, locationType, locationId) {
-  if (!locationType || locationType === 'none' || !locationId) return null;
-  validateLocationType(locationType);
-  if (locationType === 'shelf') {
-    const shelf = await client.shelf.findUnique({ where: { id: locationId } });
-    if (!shelf) {
-      const err = new Error('目标书架不存在');
-      err.statusCode = 404;
-      throw err;
-    }
-    return shelf.libraryId ?? null;
-  } else if (locationType === 'box') {
-    const box = await client.box.findUnique({ where: { id: locationId } });
-    if (!box) {
-      const err = new Error('目标箱子不存在');
-      err.statusCode = 404;
-      throw err;
-    }
-    return box.libraryId ?? null;
-  }
-  return null;
-}
 
 // 获取书籍列表（支持分页、搜索、按分类/状态/位置筛选）
 router.get('/', async (req, res, next) => {
@@ -195,6 +149,7 @@ router.post('/', async (req, res, next) => {
     res.status(201).json(book);
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
+    if (handleTxConflict(res, err)) return;
     next(err);
   }
 });
@@ -425,6 +380,7 @@ router.post('/batch', async (req, res, next) => {
     res.status(201).json({ created: results.length, skipped: skipped.length, books: results, skippedDetails: skipped });
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
+    if (handleTxConflict(res, err)) return;
     next(err);
   }
 });
@@ -442,17 +398,10 @@ router.get('/:id', async (req, res, next) => {
       return res.status(404).json({ error: '书籍不存在' });
     }
 
-    // 查询位置信息
-    let locationInfo = null;
-    if (book.locationType === 'shelf' && book.locationId) {
-      locationInfo = await prisma.shelf.findUnique({
-        where: { id: book.locationId },
-      });
-    } else if (book.locationType === 'box' && book.locationId) {
-      locationInfo = await prisma.box.findUnique({
-        where: { id: book.locationId },
-      });
-    }
+    const locMap = await batchResolveLocationInfo(prisma, [book]);
+    const locationInfo = book.locationId
+      ? locMap.get(`${book.locationType}:${book.locationId}`) ?? null
+      : null;
 
     res.json({ ...book, locationInfo });
   } catch (err) {
@@ -562,6 +511,7 @@ router.put('/:id', async (req, res, next) => {
     if (err.code === 'P2025') {
       return res.status(404).json({ error: '书籍不存在' });
     }
+    if (handleTxConflict(res, err)) return;
     next(err);
   }
 });
@@ -605,6 +555,7 @@ router.delete('/:id', async (req, res, next) => {
     if (err.code === 'P2025') {
       return res.status(404).json({ error: '书籍不存在' });
     }
+    if (handleTxConflict(res, err)) return;
     next(err);
   }
 });
@@ -676,6 +627,7 @@ router.post('/:id/move', async (req, res, next) => {
     res.json({ message: '书籍已移动' });
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
+    if (handleTxConflict(res, err)) return;
     next(err);
   }
 });

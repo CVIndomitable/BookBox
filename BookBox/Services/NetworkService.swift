@@ -122,6 +122,13 @@ final class NetworkService: ObservableObject {
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
 
+        // 非幂等写请求带一个稳定的 X-Request-Id，网络抖动重试时服务端可识别去重，
+        // 避免重复下单/建书。GET 天然幂等，不需要 ID。
+        let isWrite = method == "POST" || method == "PUT" || method == "DELETE"
+        if isWrite {
+            urlRequest.setValue(UUID().uuidString, forHTTPHeaderField: "X-Request-Id")
+        }
+
         if let timeout {
             urlRequest.timeoutInterval = timeout
         }
@@ -137,8 +144,9 @@ final class NetworkService: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        // GET 请求自动重试（最多 3 次，指数退避）
-        let maxRetries = method == "GET" ? 3 : 1
+        // 所有请求都自动重试（最多 3 次，指数退避）；
+        // 写请求有 X-Request-Id 去重保底，不会在服务端产生重复记录。
+        let maxRetries = 3
         var lastError: Error?
         var data: Data = Data()
         var response: URLResponse = URLResponse()
