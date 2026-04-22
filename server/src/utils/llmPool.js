@@ -218,10 +218,13 @@ function markFail(id, message) {
 
 /**
  * 按优先级遍历供应商，任一成功即返回；全部失败抛错。
- * payload: { kind: 'vision'|'text', maxTokens, system?, userText, image? }
- * 返回: { text, supplier: { id, name, priority, degraded, topName, topPriority, triedCount, attempts } }
+ * payload: { kind: 'vision'|'text', maxTokens, system?, userText, image?, validate? }
+ *   validate?: (text) => { ok: true, parsed? } | { ok: false, error }
+ *   校验失败视作本家失败，继续降级。避免模型返回"拒答/非合法 JSON"时顶家被误标 ok。
+ * 返回: { text, parsed?, supplier: { id, name, priority, degraded, topName, topPriority, triedCount, attempts } }
  */
 export async function callWithFallback(payload) {
+  const { validate, ...callPayload } = payload;
   const suppliers = await getEnabledSuppliers(payload.kind);
   if (suppliers.length === 0) {
     const err = new Error(`未配置任何支持 ${payload.kind} 类型的 AI 供应商，请联系管理员`);
@@ -234,14 +237,24 @@ export async function callWithFallback(payload) {
 
   for (const sup of suppliers) {
     try {
-      const text = await callOne(sup, payload);
+      const text = await callOne(sup, callPayload);
       if (!text) throw new Error('供应商返回空内容');
+
+      let parsed;
+      if (typeof validate === 'function') {
+        const result = validate(text);
+        if (!result || result.ok !== true) {
+          throw new Error(result?.error || '返回内容校验失败');
+        }
+        parsed = result.parsed;
+      }
 
       markOk(sup.id);
       attempts.push({ name: sup.name, priority: sup.priority, ok: true });
 
       return {
         text,
+        parsed,
         supplier: {
           id: sup.id,
           name: sup.name,
