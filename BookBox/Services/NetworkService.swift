@@ -15,12 +15,23 @@ enum NetworkError: LocalizedError {
         case .invalidResponse:
             return "服务器响应格式错误"
         case .httpError(let code, let message):
-            return "请求失败(\(code)): \(message ?? "未知错误")"
+            // 服务端错误 body 一般是 {"error":"...","attempts":[...]}，抽出 error 字段展示；
+            // 解析不到就退回原始 message，避免丢失信息。
+            let extracted = Self.extractErrorField(from: message) ?? message ?? "未知错误"
+            return "请求失败(\(code)): \(extracted)"
         case .decodingError:
             return "数据解析失败"
         case .networkUnavailable:
             return "网络不可用，请检查网络连接"
         }
+    }
+
+    private static func extractErrorField(from body: String?) -> String? {
+        guard let body, let data = body.data(using: .utf8) else { return nil }
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return obj["error"] as? String
     }
 }
 
