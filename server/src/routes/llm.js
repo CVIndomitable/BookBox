@@ -186,6 +186,24 @@ router.post('/recognize', async (req, res, next) => {
       userText: prompt,
       image: { mediaType, data: cleanedImage },
       validate: (t) => {
+        // 先扫一遍整段文本，命中拒答特征就判失败降级。
+        // 背景：xuedingtoken 的个别后端会把视觉请求路由到"Kiro"之类的代码助手，
+        // 对方偶尔会把拒答文字装进 JSON 数组里（例如 [{"title":"抱歉，我是代码助手"}]），
+        // 绕过了 JSON.parse 这关。在更靠前的原文层就剔除最稳妥。
+        const refusalPatterns = [
+          /I can'?t\s+(?:analyze|help|process|assist|see|discuss)/i,
+          /I'?m\s+(?:a|an)\s+(?:text-based|coding|AI|software|developer|helpful)/i,
+          /I'?m\s+Kiro/i,
+          /I appreciate your request/i,
+          /I'?m\s+sorry[,，.]/i,
+          /抱歉[，,]\s*我(?:无法|不能|没有|只能)/,
+          /我是\s*(?:一[个款]?|)(?:AI|Kiro|代码|软件|编程|开发|助手)/,
+          /我(?:无法|不能)(?:处理|分析|识别|讨论|帮助)/,
+        ];
+        if (refusalPatterns.some((re) => re.test(t))) {
+          return { ok: false, error: `疑似拒答文本：${t.trim().slice(0, 80)}` };
+        }
+
         let parsed;
         try {
           parsed = JSON.parse(cleanJson(t));
@@ -204,6 +222,22 @@ router.post('/recognize', async (req, res, next) => {
         if (!Array.isArray(parsed)) {
           return { ok: false, error: '返回结构不是数组' };
         }
+
+        // 每项的 title 再过一遍拒答特征。曾经出现过 [{"title":"再来一个吧",...}]
+        // 这种聊天式幻觉，绕过了 JSON 校验。中文语气助词（吧/呢/啊/哦）+ 极短长度
+        // 可以大概率判定是对话而非书名。
+        const chatLikeTitle = (title) => {
+          if (typeof title !== 'string') return false;
+          const s = title.trim();
+          if (!s) return false;
+          if (refusalPatterns.some((re) => re.test(s))) return true;
+          // 5 个字以内 + 含口语语气助词，判为对话
+          return s.length <= 5 && /[吧呢啊哦嗯呀嘛哈]$/.test(s);
+        };
+        if (parsed.length > 0 && parsed.every((b) => chatLikeTitle(b?.title))) {
+          return { ok: false, error: `疑似对话式输出：${JSON.stringify(parsed).slice(0, 80)}` };
+        }
+
         return { ok: true, parsed };
       },
     });
