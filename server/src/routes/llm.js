@@ -265,27 +265,29 @@ router.post('/extract-book-details', async (req, res, next) => {
 
 示例：{"title":"活着","author":"余华","isbn":"9787506365437","publisher":"作家出版社","publishDate":"2012-08","price":20.00}`;
 
-    const { text, supplier } = await callWithFallback({
+    // validate 校验：顶级模型返回拒答文本（"I can't analyze images"）时，
+    // 解析失败会让 Pool 换下一家，而不是路由层抛 502。
+    const { parsed: raw, supplier } = await callWithFallback({
       kind: 'vision',
       maxTokens: 512,
       userText: prompt,
       image: { mediaType, data: cleanedImage },
+      validate: (t) => {
+        let parsed;
+        try {
+          parsed = JSON.parse(cleanJson(t));
+        } catch {
+          return { ok: false, error: `非 JSON 输出：${t.trim().slice(0, 80)}` };
+        }
+        if (Array.isArray(parsed)) parsed = parsed[0] ?? {};
+        if (!parsed || typeof parsed !== 'object') {
+          return { ok: false, error: '返回结构不是对象' };
+        }
+        return { ok: true, parsed };
+      },
     });
 
-    if (!text) {
-      return res.status(502).json({ error: 'AI 模型未返回有效内容，请重试' });
-    }
-
-    const cleaned = cleanJson(text);
-    let extracted;
-    try {
-      extracted = JSON.parse(cleaned);
-    } catch {
-      const snippet = text.trim().slice(0, 120);
-      return res.status(502).json({ error: `AI 返回格式异常，请重试（原文片段：${snippet}）`, supplier });
-    }
-    if (Array.isArray(extracted)) extracted = extracted[0] || {};
-    if (!extracted || typeof extracted !== 'object') extracted = {};
+    const extracted = raw || {};
 
     // 规整字段（去空白、ISBN 去连字符、price 转数字）
     const norm = (v) => (v === null || v === undefined ? null : String(v).trim() || null);
