@@ -116,15 +116,24 @@ function cleanBase64Image(raw) {
 }
 
 // 将供应商池失败中的常见错误信息归一化为用户可读的中文
+// 附上最后一家失败原因，方便一眼看出是 key 挂了、限流、还是模型没配
 function humanizeSupplierError(err) {
   const msg = err.message || '';
+  let headline;
   if (/invalid api key/i.test(msg) || /401/.test(msg) || /403/.test(msg)) {
-    return 'AI API Key 被供应商拒绝，已尝试全部备用供应商';
+    headline = 'AI API Key 被供应商拒绝，已尝试全部备用供应商';
+  } else if (/超时|timeout/i.test(msg)) {
+    headline = 'AI 服务请求超时，已尝试全部备用供应商';
+  } else {
+    headline = 'AI 识别服务异常，已尝试全部备用供应商';
   }
-  if (/超时|timeout/i.test(msg)) {
-    return 'AI 服务请求超时，已尝试全部备用供应商';
+  const attempts = Array.isArray(err.attempts) ? err.attempts : [];
+  const last = [...attempts].reverse().find((a) => !a.ok && a.error);
+  if (last) {
+    const detail = String(last.error).slice(0, 200);
+    return `${headline}（最后一家 ${last.name}：${detail}）`;
   }
-  return 'AI 识别服务异常，已尝试全部备用供应商';
+  return headline;
 }
 
 // POST /recognize — 多模态识别书籍

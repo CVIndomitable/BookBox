@@ -268,25 +268,42 @@ export async function callWithFallback(payload) {
 }
 
 // 仅供 health check 使用的单供应商 ping
-// 优先走 text 模型；只配了 vision 的供应商退回用 vision 模型 ping。
+// 配了哪个模型就 ping 哪个；两种都配则两种都 ping，任一失败整体视为失败。
+// 历史只 ping text 会漏报 vision 端点故障（拍照识别是 vision 调用）。
 export async function pingSupplier(supplier) {
-  const kind = supplier.textModel ? 'text' : (supplier.visionModel ? 'vision' : null);
-  if (!kind) {
+  const kinds = [];
+  if (supplier.textModel) kinds.push('text');
+  if (supplier.visionModel) kinds.push('vision');
+  if (kinds.length === 0) {
     return { ok: false, supplier: supplier.name, error: '未配置任何模型' };
   }
-  try {
-    const text = await callOne(supplier, {
-      kind,
-      maxTokens: 1,
-      userText: 'ping',
-    });
-    return { ok: true, supplier: supplier.name, text };
-  } catch (err) {
-    return {
-      ok: false,
-      supplier: supplier.name,
-      error: err.message,
-      httpStatus: err.httpStatus,
-    };
+
+  const details = {};
+  for (const kind of kinds) {
+    try {
+      const text = await callOne(supplier, {
+        kind,
+        maxTokens: 1,
+        userText: 'ping',
+      });
+      details[kind] = { ok: true, text };
+    } catch (err) {
+      details[kind] = { ok: false, error: err.message, httpStatus: err.httpStatus };
+    }
   }
+
+  const failed = kinds.filter((k) => !details[k].ok);
+  if (failed.length === 0) {
+    return { ok: true, supplier: supplier.name, details };
+  }
+  const errorMsg = failed
+    .map((k) => `${k} 模型: ${details[k].error}`)
+    .join('; ');
+  return {
+    ok: false,
+    supplier: supplier.name,
+    error: errorMsg,
+    httpStatus: details[failed[0]].httpStatus,
+    details,
+  };
 }
