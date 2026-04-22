@@ -70,14 +70,14 @@ router.get('/:id', async (req, res, next) => {
 
     const [books, total] = await Promise.all([
       prisma.book.findMany({
-        where: { locationType: 'shelf', locationId: id },
+        where: { locationType: 'shelf', locationId: id, deletedAt: null },
         include: { category: true },
         skip,
         take,
         orderBy: { createdAt: 'desc' },
       }),
       prisma.book.count({
-        where: { locationType: 'shelf', locationId: id },
+        where: { locationType: 'shelf', locationId: id, deletedAt: null },
       }),
     ]);
 
@@ -192,7 +192,7 @@ router.post('/:id/books', async (req, res, next) => {
 
     // 获取这些书的当前位置，用于记录日志
     const books = await prisma.book.findMany({
-      where: { id: { in: bookIds } },
+      where: { id: { in: bookIds }, deletedAt: null },
     });
 
     await prisma.$transaction(async (tx) => {
@@ -217,7 +217,7 @@ router.post('/:id/books', async (req, res, next) => {
         const [type, idStr] = key.split(':');
         const containerId = parseInt(idStr, 10);
         const count = await tx.book.count({
-          where: { locationType: type, locationId: containerId },
+          where: { locationType: type, locationId: containerId, deletedAt: null },
         });
         if (type === 'shelf') {
           await tx.shelf.update({ where: { id: containerId }, data: { bookCount: count } });
@@ -257,7 +257,7 @@ router.delete('/:id/books/:bookId', async (req, res, next) => {
     const bookId = parseId(req.params.bookId, '书籍 ID');
 
     const book = await prisma.book.findFirst({
-      where: { id: bookId, locationType: 'shelf', locationId: shelfId },
+      where: { id: bookId, locationType: 'shelf', locationId: shelfId, deletedAt: null },
     });
 
     if (!book) {

@@ -94,14 +94,14 @@ router.get('/:id', async (req, res, next) => {
 
     const [books, total] = await Promise.all([
       prisma.book.findMany({
-        where: { locationType: 'box', locationId: id },
+        where: { locationType: 'box', locationId: id, deletedAt: null },
         include: { category: true },
         skip,
         take,
         orderBy: { createdAt: 'desc' },
       }),
       prisma.book.count({
-        where: { locationType: 'box', locationId: id },
+        where: { locationType: 'box', locationId: id, deletedAt: null },
       }),
     ]);
 
@@ -213,7 +213,7 @@ router.post('/:id/books', async (req, res, next) => {
     }
 
     const books = await prisma.book.findMany({
-      where: { id: { in: bookIds } },
+      where: { id: { in: bookIds }, deletedAt: null },
     });
 
     await prisma.$transaction(async (tx) => {
@@ -238,7 +238,7 @@ router.post('/:id/books', async (req, res, next) => {
         const [type, idStr] = key.split(':');
         const containerId = parseInt(idStr, 10);
         const count = await tx.book.count({
-          where: { locationType: type, locationId: containerId },
+          where: { locationType: type, locationId: containerId, deletedAt: null },
         });
         if (type === 'shelf') {
           await tx.shelf.update({ where: { id: containerId }, data: { bookCount: count } });
@@ -278,7 +278,7 @@ router.delete('/:id/books/:bookId', async (req, res, next) => {
     const bookId = parseId(req.params.bookId, '书籍 ID');
 
     const book = await prisma.book.findFirst({
-      where: { id: bookId, locationType: 'box', locationId: boxId },
+      where: { id: bookId, locationType: 'box', locationId: boxId, deletedAt: null },
     });
 
     if (!book) {

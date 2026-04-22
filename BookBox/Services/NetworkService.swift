@@ -417,8 +417,24 @@ final class NetworkService: ObservableObject {
         try await request("PUT", path: "/books/\(id)", body: book)
     }
 
+    /// 软删：把书放进回收站（服务端会在 30 天后物理删除）
     func deleteBook(id: Int) async throws -> EmptyResponse {
         try await request("DELETE", path: "/books/\(id)")
+    }
+
+    // MARK: - 回收站
+
+    func fetchTrashedBooks() async throws -> TrashResponse {
+        try await request("GET", path: "/books/trash")
+    }
+
+    func restoreBook(id: Int) async throws -> EmptyResponse {
+        try await request("POST", path: "/books/\(id)/restore")
+    }
+
+    /// 跳过 30 天等待，立即彻底删除
+    func purgeBook(id: Int) async throws -> EmptyResponse {
+        try await request("DELETE", path: "/books/\(id)/purge")
     }
 
     // MARK: - 移动书籍

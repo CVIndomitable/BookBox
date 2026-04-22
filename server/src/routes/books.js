@@ -15,6 +15,9 @@ const router = Router();
 // 合法的地区模式
 const VALID_REGIONS = ['mainland', 'overseas'];
 
+// 回收站保留天数：超过此天数的软删书籍会被 purgeExpiredTrash 物理删除
+export const TRASH_RETENTION_DAYS = 30;
+
 // 将客户端可能传来的 "29.80元" / "¥29.8" 等形式标准化为 number 或 null，
 // 非法值一律返回 null 而不是抛错——定价是弱字段，不应阻塞整个写入。
 function parsePrice(raw) {
@@ -33,7 +36,8 @@ router.get('/', async (req, res, next) => {
     const { search, categoryId, verifyStatus, locationType, locationId, shelfId, boxId, libraryId } = req.query;
     const { page, pageSize, skip, take } = parsePagination(req.query);
 
-    const where = {};
+    // 回收站里的书不出现在任何正常列表中
+    const where = { deletedAt: null };
 
     if (search) {
       where.OR = [
@@ -192,6 +196,8 @@ router.post('/check-duplicates', async (req, res, next) => {
     };
 
     // Prisma 默认 collation 对中文大小写不敏感，title equals 已够用；这里宽松一点用 contains 也能命中，但保持精确
+    // 回收站里的书不参与查重
+    where.deletedAt = null;
     const candidates = await prisma.book.findMany({
       where,
       select: {
@@ -241,6 +247,7 @@ router.get('/duplicates', async (req, res, next) => {
     // 一次性拉全量书（只取查重所需字段），按分组逻辑在内存里聚合
     // 注：当前场景量级不大；若将来几十万本可改用 SQL GROUP BY
     const all = await prisma.book.findMany({
+      where: { deletedAt: null },
       select: {
         id: true,
         title: true,
@@ -297,6 +304,117 @@ router.get('/duplicates', async (req, res, next) => {
       totalDuplicateBooks,
     });
   } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
+    next(err);
+  }
+});
+
+// 回收站：列出软删书籍
+// 必须声明在 /:id 之前，避免被通配路由捕获
+// 响应：{ data: [...books with locationInfo], retentionDays }
+router.get('/trash', async (req, res, next) => {
+  try {
+    const books = await prisma.book.findMany({
+      where: { deletedAt: { not: null } },
+      include: { category: true },
+      orderBy: { deletedAt: 'desc' },
+    });
+
+    // 解析书原来所在的容器名（软删时 locationType/locationId 保留；用户还原时能看出回到哪里）
+    const locMap = await batchResolveLocationInfo(prisma, books);
+    const data = books.map((b) => ({
+      ...b,
+      locationInfo: b.locationId
+        ? locMap.get(`${b.locationType}:${b.locationId}`) ?? null
+        : null,
+    }));
+
+    res.json({ data, retentionDays: TRASH_RETENTION_DAYS });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 回收站：还原一本书到原位（locationType/locationId 未动，只清 deletedAt）
+// 如果原容器已被删了，只把书还原到「未归位」
+router.post('/:id/restore', async (req, res, next) => {
+  try {
+    const id = parseId(req.params.id, '书籍 ID');
+    const book = await prisma.book.findFirst({ where: { id, deletedAt: { not: null } } });
+    if (!book) {
+      return res.status(404).json({ error: '回收站中没有该书籍' });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // 校验原容器是否还存在；不存在则把书挂到「未归位」
+      let restoredLocationType = book.locationType;
+      let restoredLocationId = book.locationId;
+      let restoredLibraryId = book.libraryId;
+      if (book.locationType !== 'none' && book.locationId) {
+        try {
+          const libId = await validateLocation(tx, book.locationType, book.locationId);
+          restoredLibraryId = libId ?? restoredLibraryId ?? null;
+        } catch (e) {
+          if (e.statusCode === 404) {
+            restoredLocationType = 'none';
+            restoredLocationId = null;
+            restoredLibraryId = null;
+          } else {
+            throw e;
+          }
+        }
+      }
+
+      await tx.book.update({
+        where: { id },
+        data: {
+          deletedAt: null,
+          locationType: restoredLocationType,
+          locationId: restoredLocationId,
+          libraryId: restoredLibraryId,
+        },
+      });
+
+      await tx.bookLog.create({
+        data: {
+          bookId: id,
+          action: 'add',
+          toType: restoredLocationType,
+          toId: restoredLocationId,
+          method: 'manual',
+          note: `从回收站还原: ${book.title}${book.author ? ` / ${book.author}` : ''}`,
+        },
+      });
+
+      if (restoredLocationType !== 'none' && restoredLocationId) {
+        await updateContainerCount(tx, restoredLocationType, restoredLocationId);
+      }
+    }, { isolationLevel: 'Serializable' });
+
+    res.json({ message: '已还原' });
+  } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
+    if (handleTxConflict(res, err)) return;
+    next(err);
+  }
+});
+
+// 回收站：立即彻底删除一本书（跳过 30 天等待）
+router.delete('/:id/purge', async (req, res, next) => {
+  try {
+    const id = parseId(req.params.id, '书籍 ID');
+    const book = await prisma.book.findFirst({ where: { id, deletedAt: { not: null } } });
+    if (!book) {
+      return res.status(404).json({ error: '回收站中没有该书籍' });
+    }
+
+    // 物理删除。外键 onDelete:SetNull 会把日志里的 bookId 置空
+    await prisma.book.delete({ where: { id } });
+    res.json({ message: '已彻底删除' });
+  } catch (err) {
+    if (err.code === 'P2025') {
+      return res.status(404).json({ error: '回收站中没有该书籍' });
+    }
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     next(err);
   }
@@ -405,8 +523,8 @@ router.post('/batch', async (req, res, next) => {
 router.get('/:id', async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书籍 ID');
-    const book = await prisma.book.findUnique({
-      where: { id },
+    const book = await prisma.book.findFirst({
+      where: { id, deletedAt: null },
       include: { category: true },
     });
 
@@ -436,7 +554,7 @@ router.put('/:id', async (req, res, next) => {
       locationType, locationId,
     } = req.body;
 
-    const existingBook = await prisma.book.findUnique({ where: { id } });
+    const existingBook = await prisma.book.findFirst({ where: { id, deletedAt: null } });
     if (!existingBook) {
       return res.status(404).json({ error: '书籍不存在' });
     }
@@ -534,18 +652,19 @@ router.put('/:id', async (req, res, next) => {
   }
 });
 
-// 删除书籍（日志通过外键 onDelete:SetNull 自动置空 bookId）
+// 删除书籍 — 软删进回收站（保留 locationType/locationId，还原时能回到原位）
+// 30 天后由定时任务物理删除；容器 bookCount 立即重算（updateContainerCount 已过滤 deletedAt:null）
 router.delete('/:id', async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书籍 ID');
 
-    const book = await prisma.book.findUnique({ where: { id } });
+    const book = await prisma.book.findFirst({ where: { id, deletedAt: null } });
     if (!book) {
       return res.status(404).json({ error: '书籍不存在' });
     }
 
     await prisma.$transaction(async (tx) => {
-      // 写入删除日志（在删除书籍之前，包含完整书籍信息便于审计追溯）
+      // 写入删除日志
       await tx.bookLog.create({
         data: {
           bookId: id,
@@ -554,20 +673,22 @@ router.delete('/:id', async (req, res, next) => {
           fromId: book.locationId,
           toType: 'none',
           method: 'manual',
-          note: `删除书籍: ${book.title}${book.author ? ` / ${book.author}` : ''}`,
+          note: `移入回收站: ${book.title}${book.author ? ` / ${book.author}` : ''}`,
         },
       });
 
-      // 删除书籍（外键 onDelete:SetNull 会自动将日志的 bookId 置空）
-      await tx.book.delete({ where: { id } });
+      await tx.book.update({
+        where: { id },
+        data: { deletedAt: new Date() },
+      });
 
-      // 更新容器 book_count
+      // 更新容器 book_count（软删后不应计入）
       if (book.locationType !== 'none' && book.locationId) {
         await updateContainerCount(tx, book.locationType, book.locationId);
       }
     }, { isolationLevel: 'Serializable' });
 
-    res.json({ message: '书籍已删除' });
+    res.json({ message: '已移入回收站' });
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     if (err.code === 'P2025') {
@@ -589,7 +710,7 @@ router.post('/:id/move', async (req, res, next) => {
     }
     validateLocationType(toType);
 
-    const book = await prisma.book.findUnique({ where: { id } });
+    const book = await prisma.book.findFirst({ where: { id, deletedAt: null } });
     if (!book) {
       return res.status(404).json({ error: '书籍不存在' });
     }
@@ -713,11 +834,11 @@ router.post('/batch-import', async (req, res, next) => {
   }
 });
 
-// 导出书籍为 CSV
+// 导出书籍为 CSV（不含回收站）
 router.get('/export', async (req, res, next) => {
   try {
     const { libraryId } = req.query;
-    const where = {};
+    const where = { deletedAt: null };
 
     if (libraryId) {
       where.libraryId = parseInt(libraryId);
@@ -742,5 +863,29 @@ router.get('/export', async (req, res, next) => {
     next(err);
   }
 });
+
+// 清理过期的回收站条目（超过 TRASH_RETENTION_DAYS 天的软删书籍）
+// 物理删除即可：容器 bookCount 早在软删时已经重算过，不需要再动
+export async function purgeExpiredTrash() {
+  const cutoff = new Date(Date.now() - TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  try {
+    const result = await prisma.book.deleteMany({
+      where: { deletedAt: { lt: cutoff } },
+    });
+    if (result.count > 0) {
+      console.log(`[回收站] 清理 ${result.count} 本过期书籍（> ${TRASH_RETENTION_DAYS} 天）`);
+    }
+    return result.count;
+  } catch (err) {
+    console.error('[回收站] 清理失败:', err);
+    return 0;
+  }
+}
+
+// 启动回收站定时清理：启动时立即跑一次 + 每 24 小时一次
+export function startTrashPurgeScheduler() {
+  purgeExpiredTrash();
+  setInterval(purgeExpiredTrash, 24 * 60 * 60 * 1000);
+}
 
 export default router;

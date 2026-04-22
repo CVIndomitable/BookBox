@@ -46,9 +46,10 @@ router.get('/overview', async (req, res, next) => {
     ]);
 
     // 未归位：仅统计 book.libraryId=当前库 且 locationType='none' 的书；未选库时统计全部未归位
+    // 回收站的书不计入
     const unlocatedWhere = libraryId
-      ? { libraryId, locationType: 'none' }
-      : { locationType: 'none' };
+      ? { libraryId, locationType: 'none', deletedAt: null }
+      : { locationType: 'none', deletedAt: null };
     const unlocated = await prisma.book.count({ where: unlocatedWhere });
 
     const shelfSum = shelves.reduce((a, s) => a + (s.bookCount || 0), 0);

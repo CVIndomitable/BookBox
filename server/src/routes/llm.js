@@ -305,7 +305,8 @@ router.post('/extract-book-details', async (req, res, next) => {
 
     const cleanedExtracted = { title, author, isbn, publisher, publishDate, price };
 
-    const baseWhere = {};
+    // 基础过滤：排除回收站
+    const baseWhere = { deletedAt: null };
     if (libraryId !== undefined && libraryId !== null && libraryId !== '') {
       const id = Number(libraryId);
       if (Number.isInteger(id) && id > 0) baseWhere.libraryId = id;
@@ -603,7 +604,8 @@ router.post('/find-book', async (req, res, next) => {
 
     const aiEnabled = useAI !== false; // 默认开启，调用方显式传 false 才关闭
 
-    const baseWhere = {};
+    // 基础过滤：排除回收站
+    const baseWhere = { deletedAt: null };
     let libraryName = null;
     let libId = null;
     if (libraryId !== undefined && libraryId !== null && libraryId !== '') {

@@ -11,6 +11,8 @@ struct DuplicateCheckView: View {
     @State private var isLoading = false
     @State private var hasLoaded = false
     @State private var errorMessage: String?
+    @State private var deletingBookId: Int?
+    @State private var confirmDeleteBook: Book?
 
     var body: some View {
         NavigationStack {
@@ -55,6 +57,13 @@ struct DuplicateCheckView: View {
                                     } label: {
                                         duplicateRow(book)
                                     }
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                        Button(role: .destructive) {
+                                            confirmDeleteBook = book
+                                        } label: {
+                                            Label("移入回收站", systemImage: "trash")
+                                        }
+                                    }
                                 }
                             } header: {
                                 groupHeader(group)
@@ -91,7 +100,59 @@ struct DuplicateCheckView: View {
             } message: {
                 Text(errorMessage ?? "")
             }
+            .confirmationDialog(
+                confirmDeleteBook.map { "移入回收站：\($0.title)" } ?? "",
+                isPresented: Binding(
+                    get: { confirmDeleteBook != nil },
+                    set: { if !$0 { confirmDeleteBook = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("移入回收站", role: .destructive) {
+                    if let book = confirmDeleteBook {
+                        Task { await deleteBook(book) }
+                    }
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("30 天内可在回收站还原，过期后自动彻底删除。")
+            }
         }
+    }
+
+    // MARK: - 删除
+
+    private func deleteBook(_ book: Book) async {
+        deletingBookId = book.id
+        defer { deletingBookId = nil }
+        do {
+            _ = try await NetworkService.shared.deleteBook(id: book.id)
+            // 从当前分组列表里就地剔除；若分组只剩 1 本就整组移除
+            removeBookFromGroups(book.id)
+        } catch {
+            errorMessage = "删除失败: \(error.chineseDescription)"
+        }
+    }
+
+    private func removeBookFromGroups(_ bookId: Int) {
+        var newGroups: [DuplicateGroup] = []
+        var removedCount = 0
+        for group in groups {
+            let remaining = group.books.filter { $0.id != bookId }
+            removedCount += group.books.count - remaining.count
+            // 组内只剩 1 本就不再算重复，整组去掉
+            if remaining.count >= 2 {
+                newGroups.append(DuplicateGroup(
+                    title: group.title,
+                    publisher: group.publisher,
+                    count: remaining.count,
+                    books: remaining
+                ))
+            }
+        }
+        groups = newGroups
+        totalGroups = newGroups.count
+        totalDuplicateBooks = max(0, totalDuplicateBooks - removedCount)
     }
 
     // MARK: - 子视图

@@ -6,7 +6,7 @@ import prisma from './utils/prisma.js';
 import { authMiddleware } from './middleware/auth.js';
 import { idempotencyMiddleware } from './middleware/idempotency.js';
 import boxesRouter from './routes/boxes.js';
-import booksRouter from './routes/books.js';
+import booksRouter, { startTrashPurgeScheduler } from './routes/books.js';
 import categoriesRouter from './routes/categories.js';
 import scansRouter from './routes/scans.js';
 import settingsRouter from './routes/settings.js';
@@ -208,6 +208,8 @@ const server = app.listen(PORT, () => {
   // 初始化 APNs 和晒书提醒定时任务
   initAPNs();
   startSunReminderScheduler();
+  // 回收站定时清理（启动时跑一次 + 每 24 小时一次）
+  startTrashPurgeScheduler();
 });
 
 // 优雅关闭：断开数据库连接

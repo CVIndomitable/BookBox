@@ -182,6 +182,16 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        TrashView()
+                    } label: {
+                        Label("回收站", systemImage: "trash")
+                    }
+                } footer: {
+                    Text("删除的书先进入回收站，30 天内可还原，过期后自动彻底删除。")
+                }
+
+                Section {
                     Stepper(value: $recentBoxCount, in: 1...5) {
                         LabeledContent("最近使用的箱子数量", value: "\(recentBoxCount)")
                     }

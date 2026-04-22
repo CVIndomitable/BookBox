@@ -54,6 +54,8 @@ struct Book: Identifiable, Codable, Hashable {
     var libraryId: Int?
     var createdAt: Date?
     var updatedAt: Date?
+    /// 回收站时间；null 表示未被删（仅 /books/trash 响应会带值）
+    var deletedAt: Date?
 
     /// 位置描述文字
     var locationDescription: String {
@@ -163,4 +165,10 @@ struct DuplicateLibraryResponse: Codable {
     let groups: [DuplicateGroup]
     let totalGroups: Int
     let totalDuplicateBooks: Int
+}
+
+/// 回收站响应：软删的书 + 保留天数（服务端固定，iOS 用于提示）
+struct TrashResponse: Codable {
+    let data: [Book]
+    let retentionDays: Int
 }

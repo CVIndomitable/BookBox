@@ -26,7 +26,7 @@ router.get('/', authenticate, async (req, res, next) => {
     const unlocatedCounts = libraryIds.length > 0
       ? await prisma.book.groupBy({
           by: ['libraryId'],
-          where: { libraryId: { in: libraryIds }, locationType: 'none' },
+          where: { libraryId: { in: libraryIds }, locationType: 'none', deletedAt: null },
           _count: { _all: true },
         })
       : [];
@@ -96,7 +96,7 @@ router.get('/:id', authenticate, checkLibraryAccess('member'), async (req, res, 
 
     // totalBooks 严格按书库独立：取显示的 shelves/boxes.bookCount 之和 + 本库未归位
     const [unlocated, rooms, shelves, boxes] = await Promise.all([
-      prisma.book.count({ where: { libraryId: id, locationType: 'none' } }),
+      prisma.book.count({ where: { libraryId: id, locationType: 'none', deletedAt: null } }),
       prisma.room.findMany({
         where: { libraryId: id },
         select: { id: true, name: true, isDefault: true, description: true, createdAt: true },
