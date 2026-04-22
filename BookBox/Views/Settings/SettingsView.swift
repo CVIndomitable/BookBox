@@ -26,7 +26,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    LabeledContent("服务器地址", value: AppConfig.serverBaseURL)
+                    LabeledContent("服务器地址", value: AppConfig.current.serverBaseURL)
                         .font(.caption)
                 } header: {
                     Text("服务器")
@@ -370,7 +370,7 @@ struct SettingsView: View {
             do {
                 healthResult = try await NetworkService.shared.checkHealth()
             } catch {
-                healthError = "无法连接到服务器"
+                healthError = error.chineseDescription
             }
             isCheckingHealth = false
         }

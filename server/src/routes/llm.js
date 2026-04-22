@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import crypto from 'crypto';
 import prisma from '../utils/prisma.js';
-import { callWithFallback } from '../utils/llmPool.js';
+import { callWithFallback, callWithFallbackStream } from '../utils/llmPool.js';
 
 const router = Router();
 
@@ -338,6 +338,86 @@ router.post('/voice-command', async (req, res, next) => {
       });
     }
     next(err);
+  }
+});
+
+// POST /voice-command-stream — 语音指令解析（流式版本，测试版助手专用）
+// 请求体：{ text, context?: { rooms, shelves, boxes } }
+// 响应：Server-Sent Events (text/event-stream)
+router.post('/voice-command-stream', async (req, res, next) => {
+  try {
+    const { text, context } = req.body;
+    if (!text) {
+      return res.status(400).json({ error: '缺少语音文本' });
+    }
+
+    const systemPrompt = buildVoiceSystemPrompt(context);
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const { stream, supplier } = await callWithFallbackStream({
+      kind: 'text',
+      maxTokens: 1024,
+      system: systemPrompt,
+      userText: text,
+    });
+
+    // 先发送供应商元信息
+    res.write(`data: ${JSON.stringify({ type: 'supplier', supplier })}\n\n`);
+
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed === 'data: [DONE]') continue;
+
+        if (trimmed.startsWith('data: ')) {
+          try {
+            const json = JSON.parse(trimmed.slice(6));
+
+            // Anthropic 格式
+            if (json.type === 'content_block_delta' && json.delta?.text) {
+              res.write(`data: ${JSON.stringify({ type: 'text', text: json.delta.text })}\n\n`);
+            }
+            // OpenAI 格式
+            else if (json.choices?.[0]?.delta?.content) {
+              res.write(`data: ${JSON.stringify({ type: 'text', text: json.choices[0].delta.content })}\n\n`);
+            }
+          } catch {
+            // 忽略解析失败的行
+          }
+        }
+      }
+    }
+
+    res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+    res.end();
+  } catch (err) {
+    console.error('[LLM voice-command-stream]', err.message);
+    if (!res.headersSent) {
+      if (err.statusCode) {
+        return res.status(err.statusCode).json({
+          error: err.statusCode === 502 ? humanizeSupplierError(err) : err.message,
+          attempts: err.attempts,
+        });
+      }
+      next(err);
+    } else {
+      res.write(`data: ${JSON.stringify({ type: 'error', error: humanizeSupplierError(err) })}\n\n`);
+      res.end();
+    }
   }
 });
 

@@ -130,6 +130,61 @@ async function callAnthropic(supplier, { model, maxTokens, system, userText, ima
   }
 }
 
+// Anthropic 协议流式调用，返回 ReadableStream
+async function callAnthropicStream(supplier, { model, maxTokens, system, userText, image }) {
+  const base = validateEndpoint(supplier.endpoint);
+  const url = `${base}/v1/messages`;
+
+  const content = [];
+  if (image) {
+    content.push({
+      type: 'image',
+      source: { type: 'base64', media_type: image.mediaType, data: image.data },
+    });
+  }
+  content.push({ type: 'text', text: userText });
+
+  const body = {
+    model,
+    max_tokens: maxTokens,
+    messages: [{ role: 'user', content }],
+    thinking: { type: 'disabled' },
+    stream: true,
+  };
+  if (system) body.system = system;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), supplier.timeoutMs || 120000);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': readApiKey(supplier),
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      const err = new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
+      err.httpStatus = res.status;
+      throw err;
+    }
+    clearTimeout(timer);
+    return res.body;
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === 'AbortError') {
+      const e = new Error('请求超时');
+      e.httpStatus = 504;
+      throw e;
+    }
+    throw err;
+  }
+}
+
 // OpenAI 兼容协议调用（chat/completions）
 async function callOpenAI(supplier, { model, maxTokens, system, userText, image }) {
   const base = validateEndpoint(supplier.endpoint);
@@ -184,6 +239,59 @@ async function callOpenAI(supplier, { model, maxTokens, system, userText, image 
   }
 }
 
+// OpenAI 兼容协议流式调用，返回 ReadableStream
+async function callOpenAIStream(supplier, { model, maxTokens, system, userText, image }) {
+  const base = validateEndpoint(supplier.endpoint);
+  const url = `${base}/chat/completions`;
+
+  const messages = [];
+  if (system) messages.push({ role: 'system', content: system });
+
+  if (image) {
+    messages.push({
+      role: 'user',
+      content: [
+        { type: 'image_url', image_url: { url: `data:${image.mediaType};base64,${image.data}` } },
+        { type: 'text', text: userText },
+      ],
+    });
+  } else {
+    messages.push({ role: 'user', content: userText });
+  }
+
+  const body = { model, max_tokens: maxTokens, messages, stream: true };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), supplier.timeoutMs || 120000);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${readApiKey(supplier)}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      const err = new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
+      err.httpStatus = res.status;
+      throw err;
+    }
+    clearTimeout(timer);
+    return res.body;
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === 'AbortError') {
+      const e = new Error('请求超时');
+      e.httpStatus = 504;
+      throw e;
+    }
+    throw err;
+  }
+}
+
 // 单次调用某个供应商
 async function callOne(supplier, payload) {
   const model = payload.kind === 'vision' ? supplier.visionModel : supplier.textModel;
@@ -195,6 +303,21 @@ async function callOne(supplier, payload) {
 
   const protocol = (supplier.protocol || 'anthropic').toLowerCase();
   const callFn = protocol === 'openai' ? callOpenAI : callAnthropic;
+
+  return await callFn(supplier, { ...payload, model });
+}
+
+// 单次流式调用某个供应商，返回 ReadableStream
+async function callOneStream(supplier, payload) {
+  const model = payload.kind === 'vision' ? supplier.visionModel : supplier.textModel;
+  if (!model) {
+    const err = new Error(`供应商 ${supplier.name} 未配置 ${payload.kind} 模型`);
+    err.statusCode = 422;
+    throw err;
+  }
+
+  const protocol = (supplier.protocol || 'anthropic').toLowerCase();
+  const callFn = protocol === 'openai' ? callOpenAIStream : callAnthropicStream;
 
   return await callFn(supplier, { ...payload, model });
 }
@@ -257,6 +380,57 @@ export async function callWithFallback(payload) {
       markFail(sup.id, err.message);
       attempts.push({ name: sup.name, priority: sup.priority, ok: false, error: err.message });
       console.warn(`[LLM pool] ${sup.name}(p=${sup.priority}) 失败: ${err.message}`);
+    }
+  }
+
+  const summary = attempts.map(a => `${a.name}(p=${a.priority}): ${a.error}`).join('; ');
+  const err = new Error(`所有 AI 供应商均调用失败 — ${summary}`);
+  err.statusCode = 502;
+  err.attempts = attempts;
+  throw err;
+}
+
+/**
+ * 流式版本：按优先级遍历供应商，任一成功即返回 ReadableStream；全部失败抛错。
+ * payload: { kind: 'vision'|'text', maxTokens, system?, userText, image? }
+ * 返回: { stream: ReadableStream, supplier: { id, name, priority, degraded, topName, topPriority, triedCount, attempts } }
+ */
+export async function callWithFallbackStream(payload) {
+  const suppliers = await getEnabledSuppliers(payload.kind);
+  if (suppliers.length === 0) {
+    const err = new Error(`未配置任何支持 ${payload.kind} 类型的 AI 供应商，请联系管理员`);
+    err.statusCode = 422;
+    throw err;
+  }
+
+  const top = suppliers[0];
+  const attempts = [];
+
+  for (const sup of suppliers) {
+    try {
+      const stream = await callOneStream(sup, payload);
+      if (!stream) throw new Error('供应商返回空流');
+
+      markOk(sup.id);
+      attempts.push({ name: sup.name, priority: sup.priority, ok: true });
+
+      return {
+        stream,
+        supplier: {
+          id: sup.id,
+          name: sup.name,
+          priority: sup.priority,
+          degraded: sup.id !== top.id,
+          topName: top.name,
+          topPriority: top.priority,
+          triedCount: attempts.length,
+          attempts,
+        },
+      };
+    } catch (err) {
+      markFail(sup.id, err.message);
+      attempts.push({ name: sup.name, priority: sup.priority, ok: false, error: err.message });
+      console.warn(`[LLM pool] ${sup.name}(p=${sup.priority}) 流式失败: ${err.message}`);
     }
   }
 
