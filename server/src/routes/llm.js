@@ -178,44 +178,35 @@ router.post('/recognize', async (req, res, next) => {
 
 只返回 JSON 数组，不要其他文字。`;
 
-    const { text, supplier } = await callWithFallback({
+    // 校验塞进 validate：若顶级模型返回"I can't analyze images"之类的拒答文本，
+    // 这里解析失败会让 Pool 换下一家，而不是标 ok 然后路由层抛 502。
+    const { parsed: books, supplier } = await callWithFallback({
       kind: 'vision',
       maxTokens: 2048,
       userText: prompt,
       image: { mediaType, data: cleanedImage },
+      validate: (t) => {
+        let parsed;
+        try {
+          parsed = JSON.parse(cleanJson(t));
+        } catch {
+          return { ok: false, error: `非 JSON 输出：${t.trim().slice(0, 80)}` };
+        }
+        // 兼容 AI 偶尔返回 {"books":[...]} / {"result":[...]} 之类的外壳
+        if (parsed && !Array.isArray(parsed) && typeof parsed === 'object') {
+          const wrapped = Array.isArray(parsed.books) ? parsed.books
+            : Array.isArray(parsed.result) ? parsed.result
+            : Array.isArray(parsed.data) ? parsed.data
+            : Array.isArray(parsed.items) ? parsed.items
+            : null;
+          parsed = wrapped ?? [parsed];
+        }
+        if (!Array.isArray(parsed)) {
+          return { ok: false, error: '返回结构不是数组' };
+        }
+        return { ok: true, parsed };
+      },
     });
-
-    if (!text) {
-      return res.status(502).json({ error: 'AI 模型未返回有效内容，请重试' });
-    }
-
-    const cleaned = cleanJson(text);
-    let books = [];
-    try {
-      books = JSON.parse(cleaned);
-    } catch {
-      console.warn('[LLM] JSON 解析失败，原始内容:', text.slice(0, 500));
-      // 把 AI 原文片段带回去，方便用户/日志判断是拒答、截断还是格式错误
-      const snippet = text.trim().slice(0, 120);
-      return res.status(502).json({
-        error: `AI 返回格式异常，请重试（原文片段：${snippet}）`,
-        supplier,
-      });
-    }
-
-    // 兼容 AI 偶尔返回 {"books":[...]} / {"result":[...]} 之类的外壳
-    if (books && !Array.isArray(books) && typeof books === 'object') {
-      const wrapped = Array.isArray(books.books) ? books.books
-        : Array.isArray(books.result) ? books.result
-        : Array.isArray(books.data) ? books.data
-        : Array.isArray(books.items) ? books.items
-        : null;
-      if (wrapped) {
-        books = wrapped;
-      } else {
-        books = [books];
-      }
-    }
 
     res.json({ books, supplier });
   } catch (err) {
