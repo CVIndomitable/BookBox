@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import crypto from 'crypto';
 import prisma from '../utils/prisma.js';
-import { callWithFallback } from '../utils/llmPool.js';
+import { callWithFallback, callOneSupplier, getEnabledSuppliers } from '../utils/llmPool.js';
 
 const router = Router();
 
@@ -252,6 +252,103 @@ router.post('/recognize', async (req, res, next) => {
       });
     }
     return res.status(502).json({ error: humanizeSupplierError(err) });
+  }
+});
+
+// POST /recognize-compare — 并行调用所有启用的视觉供应商，返回每家的原始输出+耗时
+// 用于人工评估各供应商对同一张照片的识别质量，不走 fallback、不做 validate。
+router.post('/recognize-compare', async (req, res, next) => {
+  try {
+    const { image } = req.body;
+    if (!image) {
+      return res.status(400).json({ error: '缺少图片数据' });
+    }
+    const cleanedImage = cleanBase64Image(image);
+    if (!cleanedImage) {
+      return res.status(400).json({ error: '图片数据格式无效，请重新拍照' });
+    }
+    const buf = Buffer.from(cleanedImage, 'base64');
+    if (buf.length > 5 * 1024 * 1024) {
+      return res.status(413).json({ error: '图片过大（上限 5MB）' });
+    }
+    const isPng = buf.length > 4 && buf[0] === 0x89 && buf[1] === 0x50;
+    const mediaType = isPng ? 'image/png' : 'image/jpeg';
+
+    const prompt = `请按以下两步分析这张照片：
+
+第一步：识别书籍。仔细观察照片，找出所有是"书"的物体。书可能以任意姿态出现：书脊朝外、封面朝上、摊开、歪斜、堆叠等。注意区分书籍和其他物品（文件夹、笔记本、平板电脑、纸张等不算书）。
+
+第二步：提取书名。对第一步中识别出的每一本书，尝试从书脊、封面或内页上读取书名和作者。如果文字模糊、被遮挡或角度太大无法辨认，仍然记录这本书但标注为低置信度。
+
+请以 JSON 数组返回结果，每项包含：
+- title：书名（如果完全无法辨认文字，写"无法辨认"）
+- author：作者（看不到则为 null）
+- confidence：置信度（high = 书名清晰可读；medium = 能大致辨认但不完全确定；low = 能看到是书但书名很难辨认）
+- category：根据书名和作者推断最合适的分类，从以下选项中选一个：文学小说、历史文化、哲学思想、科学技术、经济管理、艺术设计、教育学习、社科心理、生活休闲、儿童读物、其他
+
+只返回 JSON 数组，不要其他文字。`;
+
+    const suppliers = await getEnabledSuppliers('vision');
+    if (suppliers.length === 0) {
+      return res.status(422).json({ error: '没有启用任何视觉供应商' });
+    }
+
+    // 并行调用所有视觉供应商。任一家失败不影响其他家，结果与供应商顺序一一对应。
+    const results = await Promise.all(
+      suppliers.map(async (sup) => {
+        const started = Date.now();
+        try {
+          const text = await callOneSupplier(sup, {
+            kind: 'vision',
+            maxTokens: 2048,
+            userText: prompt,
+            image: { mediaType, data: cleanedImage },
+          });
+          const durationMs = Date.now() - started;
+          let parsed = null;
+          let parseError = null;
+          try {
+            const j = JSON.parse(cleanJson(text));
+            if (Array.isArray(j)) {
+              parsed = j;
+            } else if (j && typeof j === 'object') {
+              parsed = Array.isArray(j.books) ? j.books
+                : Array.isArray(j.result) ? j.result
+                : Array.isArray(j.data) ? j.data
+                : Array.isArray(j.items) ? j.items
+                : [j];
+            }
+          } catch (e) {
+            parseError = e.message;
+          }
+          return {
+            supplier: sup.name,
+            priority: sup.priority,
+            model: sup.visionModel,
+            ok: true,
+            durationMs,
+            text,
+            parsed,
+            parseError,
+            titleCount: Array.isArray(parsed) ? parsed.length : null,
+          };
+        } catch (err) {
+          return {
+            supplier: sup.name,
+            priority: sup.priority,
+            model: sup.visionModel,
+            ok: false,
+            durationMs: Date.now() - started,
+            error: err.message,
+          };
+        }
+      })
+    );
+
+    res.json({ count: suppliers.length, results });
+  } catch (err) {
+    console.error('[LLM recognize-compare]', err.message);
+    next(err);
   }
 });
 

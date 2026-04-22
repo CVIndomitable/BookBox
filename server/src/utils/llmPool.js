@@ -185,6 +185,10 @@ async function callOpenAI(supplier, { model, maxTokens, system, userText, image 
 }
 
 // 单次调用某个供应商
+export async function callOneSupplier(supplier, payload) {
+  return callOne(supplier, payload);
+}
+
 async function callOne(supplier, payload) {
   const model = payload.kind === 'vision' ? supplier.visionModel : supplier.textModel;
   if (!model) {
