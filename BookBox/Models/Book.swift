@@ -41,6 +41,9 @@ struct Book: Identifiable, Codable, Hashable {
     var author: String?
     var isbn: String?
     var publisher: String?
+    var publishDate: String?
+    // 定价：Prisma Decimal 序列化后是字符串（如 "29.80"），直接按 String 解码避免精度问题
+    var price: String?
     var coverUrl: String?
     var categoryId: Int?
     var verifyStatus: VerifyStatus?
@@ -86,11 +89,32 @@ struct NewBookRequest: Codable {
     var author: String?
     var isbn: String?
     var publisher: String?
+    var publishDate: String?
+    // 发给服务器时也用字符串，服务端会解析 "29.8"/"¥29.8"/"29.80元" 等形式
+    var price: String?
     var coverUrl: String?
     var categoryId: Int?
     var verifyStatus: VerifyStatus?
     var verifySource: String?
     var rawOcrText: String?
+}
+
+/// 从照片提取书籍详情的响应
+struct ExtractBookDetailsResponse: Codable {
+    let extracted: ExtractedBookDetails
+    let match: Book?
+    let matchReason: String?
+    let candidates: [Book]
+}
+
+/// AI 从照片里读出的字段（任意一项可能为 nil）
+struct ExtractedBookDetails: Codable {
+    var title: String?
+    var author: String?
+    var isbn: String?
+    var publisher: String?
+    var publishDate: String?
+    var price: Double?
 }
 
 /// 移动书籍请求

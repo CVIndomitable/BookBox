@@ -221,6 +221,159 @@ router.post('/recognize', async (req, res, next) => {
   }
 });
 
+// POST /extract-book-details — 从照片里提取书籍详情（ISBN/出版时间/定价/出版社）
+// 并尝试关联到库内已存在的那本书。
+// 请求体：{ image: base64, libraryId?: number }
+// 响应：{
+//   extracted: { title, author, isbn, publisher, publishDate, price },
+//   match: Book | null,              // 直接命中的唯一那本（优先 ISBN）
+//   matchReason: 'isbn'|'title+author'|'title' | null,
+//   candidates: Book[],              // 有多本疑似时列出来给用户挑
+//   supplier?
+// }
+router.post('/extract-book-details', async (req, res, next) => {
+  try {
+    const { image, libraryId } = req.body || {};
+    if (!image) {
+      return res.status(400).json({ error: '缺少图片数据' });
+    }
+
+    const cleanedImage = cleanBase64Image(image);
+    if (!cleanedImage) {
+      return res.status(400).json({ error: '图片数据格式无效，请重新拍照' });
+    }
+
+    const buf = Buffer.from(cleanedImage, 'base64');
+    const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+    if (buf.length > MAX_IMAGE_BYTES) {
+      return res.status(413).json({ error: '图片过大（上限 5MB），请重新拍照或压缩后上传' });
+    }
+    const isPng = buf.length > 4 && buf[0] === 0x89 && buf[1] === 0x50;
+    const mediaType = isPng ? 'image/png' : 'image/jpeg';
+
+    const prompt = `请仔细观察这张书籍照片（封面、书脊、版权页、价签任意一种），提取书籍的详细信息。
+
+要提取的字段：
+- title: 书名（必填，看不到写"无法辨认"）
+- author: 作者
+- isbn: ISBN 号（10 位或 13 位数字，去除所有连字符和空格）
+- publisher: 出版社
+- publishDate: 出版时间（原样保留，可以是 "2023-05"/"2023年5月"/"1999" 等任意格式）
+- price: 定价（只返回数字，如 29.8，不要带货币符号和"元"字）
+
+只返回一个 JSON 对象，不要数组、不要 markdown、不要解释。看不到的字段写 null，不要编造。
+
+示例：{"title":"活着","author":"余华","isbn":"9787506365437","publisher":"作家出版社","publishDate":"2012-08","price":20.00}`;
+
+    const { text, supplier } = await callWithFallback({
+      kind: 'vision',
+      maxTokens: 512,
+      userText: prompt,
+      image: { mediaType, data: cleanedImage },
+    });
+
+    if (!text) {
+      return res.status(502).json({ error: 'AI 模型未返回有效内容，请重试' });
+    }
+
+    const cleaned = cleanJson(text);
+    let extracted;
+    try {
+      extracted = JSON.parse(cleaned);
+    } catch {
+      const snippet = text.trim().slice(0, 120);
+      return res.status(502).json({ error: `AI 返回格式异常，请重试（原文片段：${snippet}）`, supplier });
+    }
+    if (Array.isArray(extracted)) extracted = extracted[0] || {};
+    if (!extracted || typeof extracted !== 'object') extracted = {};
+
+    // 规整字段（去空白、ISBN 去连字符、price 转数字）
+    const norm = (v) => (v === null || v === undefined ? null : String(v).trim() || null);
+    const title = norm(extracted.title);
+    const author = norm(extracted.author);
+    const rawIsbn = norm(extracted.isbn);
+    const isbn = rawIsbn ? rawIsbn.replace(/[-\s]/g, '') : null;
+    const publisher = norm(extracted.publisher);
+    const publishDate = norm(extracted.publishDate);
+    let price = null;
+    if (extracted.price !== null && extracted.price !== undefined && extracted.price !== '') {
+      const n = Number(String(extracted.price).replace(/[¥￥$,\s元RMB]/gi, ''));
+      if (Number.isFinite(n) && n >= 0) price = n;
+    }
+
+    const cleanedExtracted = { title, author, isbn, publisher, publishDate, price };
+
+    const baseWhere = {};
+    if (libraryId !== undefined && libraryId !== null && libraryId !== '') {
+      const id = Number(libraryId);
+      if (Number.isInteger(id) && id > 0) baseWhere.libraryId = id;
+    }
+
+    let match = null;
+    let matchReason = null;
+    let candidates = [];
+
+    // 匹配优先级：ISBN 精确 → title+author 精确 → title contains
+    if (isbn) {
+      const byIsbn = await prisma.book.findMany({
+        where: { ...baseWhere, isbn },
+        take: 5,
+      });
+      if (byIsbn.length === 1) {
+        match = byIsbn[0];
+        matchReason = 'isbn';
+      } else if (byIsbn.length > 1) {
+        candidates = byIsbn;
+      }
+    }
+
+    if (!match && candidates.length === 0 && title && title !== '无法辨认') {
+      if (author) {
+        const byTitleAuthor = await prisma.book.findMany({
+          where: { ...baseWhere, title, author },
+          take: 5,
+        });
+        if (byTitleAuthor.length === 1) {
+          match = byTitleAuthor[0];
+          matchReason = 'title+author';
+        } else if (byTitleAuthor.length > 1) {
+          candidates = byTitleAuthor;
+        }
+      }
+      if (!match && candidates.length === 0) {
+        const byTitle = await prisma.book.findMany({
+          where: { ...baseWhere, title: { contains: title } },
+          take: 10,
+          orderBy: { createdAt: 'desc' },
+        });
+        if (byTitle.length === 1) {
+          match = byTitle[0];
+          matchReason = 'title';
+        } else if (byTitle.length > 1) {
+          candidates = byTitle;
+        }
+      }
+    }
+
+    res.json({
+      extracted: cleanedExtracted,
+      match,
+      matchReason,
+      candidates,
+      supplier,
+    });
+  } catch (err) {
+    console.error('[LLM extract-book-details]', err.message);
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        error: err.statusCode === 502 ? humanizeSupplierError(err) : err.message,
+        attempts: err.attempts,
+      });
+    }
+    return res.status(502).json({ error: humanizeSupplierError(err) });
+  }
+});
+
 // 基于书库上下文构建固定格式的 system prompt
 // 客户端仅传结构化上下文，禁止直接拼接 prompt，避免提示注入
 function buildVoiceSystemPrompt(context) {

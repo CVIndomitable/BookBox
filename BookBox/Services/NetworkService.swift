@@ -511,6 +511,20 @@ final class NetworkService: ObservableObject {
         return result
     }
 
+    /// 从照片提取书籍详情（ISBN/出版时间/定价/出版社），并尝试匹配库内已有书
+    /// libraryId 传了就只在该库内匹配；不传则跨全库
+    func extractBookDetails(imageData: Data, libraryId: Int? = nil) async throws -> ExtractBookDetailsResponse {
+        struct Req: Codable { let image: String; let libraryId: Int? }
+        let base64 = imageData.base64EncodedString()
+        let response: ExtractBookDetailsResponse = try await request(
+            "POST",
+            path: "/llm/extract-book-details",
+            body: Req(image: base64, libraryId: libraryId),
+            timeout: 120
+        )
+        return response
+    }
+
     /// Siri/语音查书的智能搜索：严格子串 → 归一化宽松 → AI 兜底
     /// method 告诉调用方匹配等级：strict 精确、loose 宽松、ai 由 AI 猜的、none 没找到
     /// useAI=false 时只跑 DB 两层（供级联流程里前几轮只做快速筛查用）

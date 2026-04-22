@@ -27,6 +27,7 @@ struct LibraryView: View {
     @State private var showLogs = false
     @State private var showCategories = false
     @State private var showScanHistory = false
+    @State private var showDetailsScan = false
 
     enum ViewMode: String, CaseIterable {
         case overview = "总览"
@@ -64,6 +65,9 @@ struct LibraryView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
+                        Button { showDetailsScan = true } label: {
+                            Label("拍照补详情", systemImage: "camera.viewfinder")
+                        }
                         Button { showLogs = true } label: {
                             Label("操作日志", systemImage: "clock.arrow.circlepath")
                         }
@@ -81,6 +85,16 @@ struct LibraryView: View {
             .navigationDestination(isPresented: $showLogs) { LogsView() }
             .navigationDestination(isPresented: $showCategories) { CategoryManageView() }
             .navigationDestination(isPresented: $showScanHistory) { ScanHistoryView() }
+            .sheet(isPresented: $showDetailsScan) {
+                NavigationStack {
+                    BookDetailsScanView(libraryId: selectedLibraryId) { updated in
+                        // 若当前正在浏览书列表，把更新后的书直接替换掉旧的，省一次刷新
+                        if let idx = books.firstIndex(where: { $0.id == updated.id }) {
+                            books[idx] = updated
+                        }
+                    }
+                }
+            }
             .searchable(text: $searchText, prompt: "搜索书名或作者")
             .onChange(of: searchText) { _, _ in
                 if viewMode == .books {
@@ -650,8 +664,18 @@ struct LibraryBookDetailView: View {
     @State private var editAuthor = ""
     @State private var editIsbn = ""
     @State private var editPublisher = ""
+    @State private var editPublishDate = ""
+    @State private var editPrice = ""
     @State private var isSaving = false
     @State private var isConfirmingStatus = false
+
+    // 拍照识别详情
+    @State private var showDetailCamera = false
+    @State private var detailImage: UIImage?
+    @State private var isExtractingDetails = false
+    @State private var extractResult: ExtractBookDetailsResponse?
+    @State private var showCandidatePicker = false
+    @State private var showExtractedPreview = false
 
     var body: some View {
         Group {
@@ -674,17 +698,34 @@ struct LibraryBookDetailView: View {
                         }
                     }
 
-                    Section("基本信息") {
+                    Section {
                         LabeledContent("书名", value: detail.title)
-                        if let author = detail.author {
+                        if let author = detail.author, !author.isEmpty {
                             LabeledContent("作者", value: author)
                         }
-                        if let isbn = detail.isbn {
+                        if let isbn = detail.isbn, !isbn.isEmpty {
                             LabeledContent("ISBN", value: isbn)
                         }
-                        if let publisher = detail.publisher {
+                        if let publisher = detail.publisher, !publisher.isEmpty {
                             LabeledContent("出版社", value: publisher)
                         }
+                        if let pd = detail.publishDate, !pd.isEmpty {
+                            LabeledContent("出版时间", value: pd)
+                        }
+                        if let p = detail.price, !p.isEmpty {
+                            LabeledContent("定价", value: "¥\(p)")
+                        }
+                    } header: {
+                        Text("基本信息")
+                    } footer: {
+                        Button {
+                            detailImage = nil
+                            showDetailCamera = true
+                        } label: {
+                            Label("拍照补充详情", systemImage: "camera.viewfinder")
+                        }
+                        .buttonStyle(.bordered)
+                        .padding(.top, 4)
                     }
 
                     Section("位置") {
@@ -791,6 +832,8 @@ struct LibraryBookDetailView: View {
                     editAuthor = detail?.author ?? book.author ?? ""
                     editIsbn = detail?.isbn ?? book.isbn ?? ""
                     editPublisher = detail?.publisher ?? book.publisher ?? ""
+                    editPublishDate = detail?.publishDate ?? book.publishDate ?? ""
+                    editPrice = detail?.price ?? book.price ?? ""
                     showEdit = true
                 } label: {
                     Text("编辑")
@@ -816,7 +859,11 @@ struct LibraryBookDetailView: View {
                         TextField("书名", text: $editTitle)
                         TextField("作者", text: $editAuthor)
                         TextField("ISBN", text: $editIsbn)
+                            .keyboardType(.numbersAndPunctuation)
                         TextField("出版社", text: $editPublisher)
+                        TextField("出版时间（如 2023-05）", text: $editPublishDate)
+                        TextField("定价", text: $editPrice)
+                            .keyboardType(.decimalPad)
                     }
                 }
                 .navigationTitle("编辑书籍")
@@ -840,6 +887,39 @@ struct LibraryBookDetailView: View {
                     } catch {
                         errorMessage = "刷新书籍详情失败: \(error.chineseDescription)"
                     }
+                }
+            }
+        }
+        .sheet(isPresented: $showDetailCamera) {
+            CameraView(capturedImage: $detailImage)
+                .ignoresSafeArea()
+        }
+        .onChange(of: detailImage) { _, newValue in
+            guard let img = newValue else { return }
+            extractDetailsFromImage(img)
+        }
+        .sheet(isPresented: $showExtractedPreview) {
+            if let extracted = extractResult?.extracted {
+                NavigationStack {
+                    ExtractedDetailsPreviewView(
+                        extracted: extracted,
+                        onApply: { applyExtractedToCurrentBook(extracted) }
+                    )
+                }
+            }
+        }
+        .overlay {
+            if isExtractingDetails {
+                ZStack {
+                    Color.black.opacity(0.4).ignoresSafeArea()
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("AI 识别中…")
+                            .font(.caption)
+                            .foregroundStyle(.white)
+                    }
+                    .padding()
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
                 }
             }
         }
@@ -868,6 +948,8 @@ struct LibraryBookDetailView: View {
                     author: editAuthor.isEmpty ? nil : editAuthor,
                     isbn: editIsbn.isEmpty ? nil : editIsbn,
                     publisher: editPublisher.isEmpty ? nil : editPublisher,
+                    publishDate: editPublishDate.isEmpty ? nil : editPublishDate,
+                    price: editPrice.isEmpty ? nil : editPrice,
                     coverUrl: detail?.coverUrl,
                     categoryId: detail?.categoryId,
                     verifyStatus: detail?.verifyStatus,
@@ -902,6 +984,58 @@ struct LibraryBookDetailView: View {
         setVerifyStatus(.uncertain)
     }
 
+    /// 从拍到的照片里抽取详情。注意：本页面已锁定到当前书（book.id），
+    /// 不走库内匹配逻辑，直接用抽取结果覆盖当前书的字段。
+    private func extractDetailsFromImage(_ image: UIImage) {
+        guard let data = image.jpegData(compressionQuality: 0.8) else {
+            errorMessage = "照片压缩失败"
+            return
+        }
+        isExtractingDetails = true
+        Task {
+            defer { isExtractingDetails = false }
+            do {
+                let resp = try await NetworkService.shared.extractBookDetails(imageData: data)
+                extractResult = resp
+                showExtractedPreview = true
+            } catch {
+                errorMessage = error.chineseDescription
+            }
+        }
+    }
+
+    /// 把抽取结果合并到当前书：空字段不覆盖，有值则写入
+    private func applyExtractedToCurrentBook(_ e: ExtractedBookDetails) {
+        guard let current = detail else { return }
+        isSaving = true
+        Task {
+            defer { isSaving = false }
+            do {
+                let priceStr: String? = {
+                    if let p = e.price { return String(p) }
+                    return current.price
+                }()
+                let request = NewBookRequest(
+                    title: (e.title?.isEmpty == false && e.title != "无法辨认") ? e.title! : current.title,
+                    author: (e.author?.isEmpty == false) ? e.author : current.author,
+                    isbn: (e.isbn?.isEmpty == false) ? e.isbn : current.isbn,
+                    publisher: (e.publisher?.isEmpty == false) ? e.publisher : current.publisher,
+                    publishDate: (e.publishDate?.isEmpty == false) ? e.publishDate : current.publishDate,
+                    price: priceStr,
+                    coverUrl: current.coverUrl,
+                    categoryId: current.categoryId,
+                    verifyStatus: current.verifyStatus,
+                    verifySource: current.verifySource,
+                    rawOcrText: current.rawOcrText
+                )
+                detail = try await NetworkService.shared.updateBook(id: book.id, request)
+                showExtractedPreview = false
+            } catch {
+                errorMessage = error.chineseDescription
+            }
+        }
+    }
+
     private func setVerifyStatus(_ newStatus: VerifyStatus) {
         guard let current = detail else { return }
         isConfirmingStatus = true
@@ -912,6 +1046,8 @@ struct LibraryBookDetailView: View {
                     author: current.author,
                     isbn: current.isbn,
                     publisher: current.publisher,
+                    publishDate: current.publishDate,
+                    price: current.price,
                     coverUrl: current.coverUrl,
                     categoryId: current.categoryId,
                     verifyStatus: newStatus,
@@ -924,6 +1060,58 @@ struct LibraryBookDetailView: View {
             }
             isConfirmingStatus = false
         }
+    }
+}
+
+/// 抽取结果预览：展示 AI 从照片里读到的字段，用户可确认是否应用
+struct ExtractedDetailsPreviewView: View {
+    let extracted: ExtractedBookDetails
+    let onApply: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        Form {
+            Section {
+                row("书名", extracted.title)
+                row("作者", extracted.author)
+                row("ISBN", extracted.isbn)
+                row("出版社", extracted.publisher)
+                row("出版时间", extracted.publishDate)
+                if let p = extracted.price {
+                    LabeledContent("定价") {
+                        Text(String(format: "¥%.2f", p))
+                    }
+                }
+            } header: {
+                Text("识别结果")
+            } footer: {
+                Text("空字段不会覆盖已有数据；非空字段会写入当前书。")
+            }
+        }
+        .navigationTitle("识别到的详情")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("取消") { dismiss() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("写入") { onApply() }
+                    .disabled(!hasAnyValue)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func row(_ label: String, _ value: String?) -> some View {
+        if let v = value, !v.isEmpty {
+            LabeledContent(label, value: v)
+        }
+    }
+
+    private var hasAnyValue: Bool {
+        [extracted.title, extracted.author, extracted.isbn, extracted.publisher, extracted.publishDate]
+            .contains { ($0?.isEmpty == false) && $0 != "无法辨认" }
+        || extracted.price != nil
     }
 }
 

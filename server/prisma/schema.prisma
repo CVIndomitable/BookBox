@@ -86,6 +86,8 @@ model Book {
   author        String?   @db.VarChar(500)
   isbn          String?   @db.VarChar(20)
   publisher     String?   @db.VarChar(200)
+  publishDate   String?   @map("publish_date") @db.VarChar(50)  // 出版时间：来源多样（2023-05/2023年5月/1999），用字符串存原文
+  price         Decimal?  @db.Decimal(10, 2)                    // 定价（元），保留两位小数
   coverUrl      String?   @map("cover_url") @db.Text
   categoryId    Int?      @map("category_id")
   verifyStatus  String?   @map("verify_status") @db.VarChar(20)  // matched/uncertain/not_found/manual

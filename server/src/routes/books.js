@@ -15,6 +15,18 @@ const router = Router();
 // 合法的地区模式
 const VALID_REGIONS = ['mainland', 'overseas'];
 
+// 将客户端可能传来的 "29.80元" / "¥29.8" 等形式标准化为 number 或 null，
+// 非法值一律返回 null 而不是抛错——定价是弱字段，不应阻塞整个写入。
+function parsePrice(raw) {
+  if (raw === undefined || raw === null || raw === '') return null;
+  if (typeof raw === 'number') {
+    return Number.isFinite(raw) && raw >= 0 ? raw : null;
+  }
+  const m = String(raw).replace(/[¥￥$,\s元RMB]/gi, '');
+  const n = Number(m);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
 // 获取书籍列表（支持分页、搜索、按分类/状态/位置筛选）
 router.get('/', async (req, res, next) => {
   try {
@@ -84,7 +96,7 @@ router.get('/', async (req, res, next) => {
 router.post('/', async (req, res, next) => {
   try {
     const {
-      title, author, isbn, publisher, coverUrl,
+      title, author, isbn, publisher, publishDate, price, coverUrl,
       categoryId, verifyStatus, verifySource, rawOcrText,
       locationType, locationId, libraryId,
     } = req.body;
@@ -116,6 +128,8 @@ router.post('/', async (req, res, next) => {
           author,
           isbn,
           publisher,
+          publishDate: publishDate || null,
+          price: parsePrice(price),
           coverUrl,
           categoryId: parseOptionalId(categoryId),
           verifyStatus: verifyStatus || 'not_found',
@@ -342,6 +356,8 @@ router.post('/batch', async (req, res, next) => {
             author: bookData.author,
             isbn: bookData.isbn,
             publisher: bookData.publisher,
+            publishDate: bookData.publishDate || null,
+            price: parsePrice(bookData.price),
             coverUrl: bookData.coverUrl,
             categoryId: parseOptionalId(bookData.categoryId),
             verifyStatus: bookData.verifyStatus || 'not_found',
@@ -415,7 +431,7 @@ router.put('/:id', async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书籍 ID');
     const {
-      title, author, isbn, publisher, coverUrl,
+      title, author, isbn, publisher, publishDate, price, coverUrl,
       categoryId, verifyStatus, verifySource,
       locationType, locationId,
     } = req.body;
@@ -430,6 +446,8 @@ router.put('/:id', async (req, res, next) => {
     if (author !== undefined) data.author = author;
     if (isbn !== undefined) data.isbn = isbn;
     if (publisher !== undefined) data.publisher = publisher;
+    if (publishDate !== undefined) data.publishDate = publishDate || null;
+    if (price !== undefined) data.price = parsePrice(price);
     if (coverUrl !== undefined) data.coverUrl = coverUrl;
     if (categoryId !== undefined)
       data.categoryId = categoryId ? parseId(categoryId, '分类 ID') : null;
@@ -677,6 +695,8 @@ router.post('/batch-import', async (req, res, next) => {
           author: bookData.author || null,
           isbn: bookData.isbn || null,
           publisher: bookData.publisher || null,
+          publishDate: bookData.publishDate || null,
+          price: parsePrice(bookData.price),
           libraryId: bookData.libraryId || null,
           locationType: bookData.locationType || 'none',
           locationId: bookData.locationId || null,
@@ -709,9 +729,9 @@ router.get('/export', async (req, res, next) => {
     });
 
     const csv = [
-      '书名,作者,ISBN,出版社,位置类型,位置ID',
+      '书名,作者,ISBN,出版社,出版时间,定价,位置类型,位置ID',
       ...booksList.map(book =>
-        `"${book.title}","${book.author || ''}","${book.isbn || ''}","${book.publisher || ''}","${book.locationType}","${book.locationId || ''}"`
+        `"${book.title}","${book.author || ''}","${book.isbn || ''}","${book.publisher || ''}","${book.publishDate || ''}","${book.price ?? ''}","${book.locationType}","${book.locationId || ''}"`
       )
     ].join('\n');
 
