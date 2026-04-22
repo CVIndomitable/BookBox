@@ -1,7 +1,10 @@
 import axios from 'axios';
 
+// 生产构建使用 VITE_API_BASE（.env.production）；开发环境走 vite 代理到 /api
+const API_BASE = import.meta.env.VITE_API_BASE || '/api';
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE,
   timeout: 30000
 });
 
@@ -19,7 +22,11 @@ api.interceptors.response.use(
     if (error.response?.status === 401) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      window.location.href = '/login';
+      // 避免已在登录页时再次跳转导致白屏刷新
+      const path = window.location.pathname;
+      if (path !== '/login' && path !== '/register') {
+        window.location.replace('/login');
+      }
     }
     return Promise.reject(error.response?.data || error);
   }

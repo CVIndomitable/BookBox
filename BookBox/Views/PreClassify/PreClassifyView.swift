@@ -364,7 +364,9 @@ struct PreClassifyView: View {
                 return
             }
             do {
-                let books = try await NetworkService.shared.recognizeBooks(imageData: compressed)
+                let books = try await RecognitionThrottle.shared.run {
+                    try await NetworkService.shared.recognizeBooks(imageData: compressed)
+                }
                 if books.isEmpty {
                     updateTask(taskId, status: .failed)
                     errorMessage = "未识别到书籍，请调整角度或距离后重试"

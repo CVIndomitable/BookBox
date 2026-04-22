@@ -2,6 +2,34 @@ import { useState } from 'react';
 import { books } from '../services/api';
 import './ImportExport.css';
 
+// 解析 RFC 4180 风格 CSV：支持双引号字段、字段内含逗号/换行、"" 转义引号
+// 返回二维数组 [[col1, col2, ...], ...]
+function parseCSV(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+  const chars = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  for (let i = 0; i < chars.length; i++) {
+    const c = chars[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (chars[i + 1] === '"') { field += '"'; i++; }
+        else { inQuotes = false; }
+      } else {
+        field += c;
+      }
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+      else field += c;
+    }
+  }
+  if (field.length > 0 || row.length > 0) { row.push(field); rows.push(row); }
+  return rows.filter(r => r.some(x => x && x.trim()));
+}
+
 export default function ImportExport({ libraryId, onImportComplete }) {
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -32,14 +60,15 @@ export default function ImportExport({ libraryId, onImportComplete }) {
     setImporting(true);
     try {
       const text = await file.text();
-      const lines = text.split('\n').filter(line => line.trim());
+      // 去掉 UTF-8 BOM 再交给 CSV 解析
+      const rows = parseCSV(text.replace(/^﻿/, ''));
 
-      if (lines.length < 2) {
+      if (rows.length < 2) {
         alert('文件格式错误：至少需要标题行和一行数据');
         return;
       }
 
-      const headers = lines[0].split(',').map(h => h.trim());
+      const headers = rows[0].map(h => h.trim());
       const titleIndex = headers.findIndex(h => h === '书名' || h === 'title');
       const authorIndex = headers.findIndex(h => h === '作者' || h === 'author');
       const isbnIndex = headers.findIndex(h => h === 'ISBN' || h === 'isbn');
@@ -51,25 +80,19 @@ export default function ImportExport({ libraryId, onImportComplete }) {
       }
 
       const booksData = [];
-      for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(',').map(v => v.trim());
-        if (values.length < headers.length) continue;
+      for (let i = 1; i < rows.length; i++) {
+        const values = rows[i].map(v => (v ?? '').trim());
+        const title = values[titleIndex];
+        if (!title) continue;
 
         const bookData = {
-          title: values[titleIndex],
-          libraryId: parseInt(libraryId),
+          title,
           verifyStatus: 'manual'
         };
 
-        if (authorIndex !== -1 && values[authorIndex]) {
-          bookData.author = values[authorIndex];
-        }
-        if (isbnIndex !== -1 && values[isbnIndex]) {
-          bookData.isbn = values[isbnIndex];
-        }
-        if (publisherIndex !== -1 && values[publisherIndex]) {
-          bookData.publisher = values[publisherIndex];
-        }
+        if (authorIndex !== -1 && values[authorIndex]) bookData.author = values[authorIndex];
+        if (isbnIndex !== -1 && values[isbnIndex]) bookData.isbn = values[isbnIndex];
+        if (publisherIndex !== -1 && values[publisherIndex]) bookData.publisher = values[publisherIndex];
 
         booksData.push(bookData);
       }
@@ -79,7 +102,8 @@ export default function ImportExport({ libraryId, onImportComplete }) {
         return;
       }
 
-      await books.batchImport({ books: booksData });
+      // 后端从 body.libraryId 读权限上下文并把所有书落在该库
+      await books.batchImport({ books: booksData, libraryId: parseInt(libraryId) });
       alert(`成功导入 ${booksData.length} 本书`);
       if (onImportComplete) onImportComplete();
     } catch (err) {

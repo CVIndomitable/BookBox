@@ -18,12 +18,22 @@ export default function LibraryDetail() {
   const [showAddMember, setShowAddMember] = useState(false);
   const [newMemberUsername, setNewMemberUsername] = useState('');
   const [newMemberRole, setNewMemberRole] = useState('member');
+  const [showAddBook, setShowAddBook] = useState(false);
+  const [newBookTitle, setNewBookTitle] = useState('');
+  const [newBookAuthor, setNewBookAuthor] = useState('');
+  const [newBookPublisher, setNewBookPublisher] = useState('');
+  const [newBookIsbn, setNewBookIsbn] = useState('');
 
   useEffect(() => {
     loadLibrary();
-    loadBooks();
     loadMembers();
   }, [id]);
+
+  // 搜索输入 debounce 500ms 再请求后端，避免每次按键打网
+  useEffect(() => {
+    const h = setTimeout(() => { loadBooks(); }, searchQuery ? 500 : 0);
+    return () => clearTimeout(h);
+  }, [id, searchQuery]);
 
   const loadLibrary = async () => {
     try {
@@ -40,8 +50,11 @@ export default function LibraryDetail() {
 
   const loadBooks = async () => {
     try {
-      const data = await books.list({ libraryId: id });
-      setBookList(data);
+      const params = { libraryId: id, pageSize: 100 };
+      if (searchQuery.trim()) params.search = searchQuery.trim();
+      // 后端返回 { data: [...], pagination }；提取 data 数组
+      const resp = await books.list(params);
+      setBookList(Array.isArray(resp) ? resp : (resp?.data || []));
     } catch (err) {
       console.error('加载书籍失败:', err);
     }
@@ -89,10 +102,31 @@ export default function LibraryDetail() {
     }
   };
 
-  const filteredBooks = bookList.filter(book =>
-    book.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    book.author?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const handleAddBook = async (e) => {
+    e.preventDefault();
+    if (!newBookTitle.trim()) return;
+    try {
+      await books.create({
+        libraryId: parseInt(id),
+        title: newBookTitle.trim(),
+        author: newBookAuthor.trim() || undefined,
+        publisher: newBookPublisher.trim() || undefined,
+        isbn: newBookIsbn.trim() || undefined,
+        verifyStatus: 'manual',
+      });
+      setShowAddBook(false);
+      setNewBookTitle('');
+      setNewBookAuthor('');
+      setNewBookPublisher('');
+      setNewBookIsbn('');
+      loadBooks();
+    } catch (err) {
+      alert(err.error || '添加失败');
+    }
+  };
+
+  // 后端已按 search 过滤，前端直接渲染
+  const filteredBooks = bookList;
 
   const canManage = library?.role === 'owner' || library?.role === 'admin';
 
@@ -152,8 +186,42 @@ export default function LibraryDetail() {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="search-input"
               />
-              <button className="btn-primary">+ 添加书籍</button>
+              <button className="btn-primary" onClick={() => setShowAddBook(true)}>+ 添加书籍</button>
             </div>
+
+            {showAddBook && (
+              <form className="add-book-form" onSubmit={handleAddBook}>
+                <input
+                  type="text"
+                  placeholder="书名（必填）"
+                  value={newBookTitle}
+                  onChange={(e) => setNewBookTitle(e.target.value)}
+                  required
+                />
+                <input
+                  type="text"
+                  placeholder="作者"
+                  value={newBookAuthor}
+                  onChange={(e) => setNewBookAuthor(e.target.value)}
+                />
+                <input
+                  type="text"
+                  placeholder="出版社"
+                  value={newBookPublisher}
+                  onChange={(e) => setNewBookPublisher(e.target.value)}
+                />
+                <input
+                  type="text"
+                  placeholder="ISBN"
+                  value={newBookIsbn}
+                  onChange={(e) => setNewBookIsbn(e.target.value)}
+                />
+                <div className="form-actions">
+                  <button type="submit" className="btn-primary">保存</button>
+                  <button type="button" className="btn-secondary" onClick={() => setShowAddBook(false)}>取消</button>
+                </div>
+              </form>
+            )}
 
             {filteredBooks.length === 0 ? (
               <div className="empty">暂无书籍</div>

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import prisma from '../utils/prisma.js';
 import { parseId, parsePagination, paginationResponse, resolveContainerPlacement } from '../utils/validate.js';
+import { checkLibraryAccess, checkContainerAccess } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -12,13 +13,10 @@ async function updateBoxCount(tx, boxId) {
   await tx.box.update({ where: { id: boxId }, data: { bookCount: count } });
 }
 
-// 获取所有箱子列表（支持按书库/房间筛选）
-router.get('/', async (req, res, next) => {
+// 获取所有箱子列表（必须指定 libraryId，且用户必须是该书库成员）
+router.get('/', checkLibraryAccess('member'), async (req, res, next) => {
   try {
-    const where = {};
-    if (req.query.libraryId) {
-      where.libraryId = parseId(req.query.libraryId, '书库 ID');
-    }
+    const where = { libraryId: req.libraryId };
     if (req.query.roomId) {
       where.roomId = parseId(req.query.roomId, '房间 ID');
     }
@@ -35,7 +33,7 @@ router.get('/', async (req, res, next) => {
 });
 
 // 新建箱子（在事务内生成编号，避免竞态）
-router.post('/', async (req, res, next) => {
+router.post('/', checkLibraryAccess('admin'), async (req, res, next) => {
   try {
     const { name, description, libraryId, roomId } = req.body;
 
@@ -81,7 +79,7 @@ router.post('/', async (req, res, next) => {
 });
 
 // 获取箱子详情及其中的书
-router.get('/:id', async (req, res, next) => {
+router.get('/:id', checkContainerAccess('box', 'member'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '箱子 ID');
     const { page, pageSize, skip, take } = parsePagination(req.query, 50);
@@ -117,7 +115,7 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // 更新箱子信息（支持搬动：roomId/libraryId 任一传入会重新计算归属）
-router.put('/:id', async (req, res, next) => {
+router.put('/:id', checkContainerAccess('box', 'admin'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '箱子 ID');
     const { name, description, libraryId, roomId } = req.body;
@@ -130,6 +128,15 @@ router.put('/:id', async (req, res, next) => {
     const hasLib = Object.prototype.hasOwnProperty.call(req.body, 'libraryId');
     if (hasRoom || hasLib) {
       const placement = await resolveContainerPlacement(prisma, { libraryId, roomId });
+      // 跨书库搬动：要求用户对目标书库也是 admin
+      if (placement.libraryId && placement.libraryId !== req.libraryId) {
+        const targetMembership = await prisma.libraryMember.findUnique({
+          where: { userId_libraryId: { userId: req.user.id, libraryId: placement.libraryId } },
+        });
+        if (!targetMembership || (targetMembership.role !== 'owner' && targetMembership.role !== 'admin')) {
+          return res.status(403).json({ error: '无权搬动到目标书库' });
+        }
+      }
       data.libraryId = placement.libraryId;
       data.roomId = placement.roomId;
     }
@@ -147,7 +154,7 @@ router.put('/:id', async (req, res, next) => {
 });
 
 // 删除箱子（书不删除，只重置位置，并记录日志）
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', checkContainerAccess('box', 'admin'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '箱子 ID');
 
@@ -198,7 +205,7 @@ router.delete('/:id', async (req, res, next) => {
 });
 
 // 向箱子中添加书籍
-router.post('/:id/books', async (req, res, next) => {
+router.post('/:id/books', checkContainerAccess('box', 'member'), async (req, res, next) => {
   try {
     const boxId = parseId(req.params.id, '箱子 ID');
     const { bookIds } = req.body;
@@ -272,7 +279,7 @@ router.post('/:id/books', async (req, res, next) => {
 });
 
 // 从箱子中移除书籍
-router.delete('/:id/books/:bookId', async (req, res, next) => {
+router.delete('/:id/books/:bookId', checkContainerAccess('box', 'member'), async (req, res, next) => {
   try {
     const boxId = parseId(req.params.id, '箱子 ID');
     const bookId = parseId(req.params.bookId, '书籍 ID');

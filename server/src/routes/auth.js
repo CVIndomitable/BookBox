@@ -15,8 +15,8 @@ router.post('/register', async (req, res, next) => {
       return res.status(400).json({ error: '用户名和密码不能为空' });
     }
 
-    if (password.length < 6) {
-      return res.status(400).json({ error: '密码至少 6 位' });
+    if (password.length < 8) {
+      return res.status(400).json({ error: '密码至少 8 位' });
     }
 
     const existing = await prisma.user.findFirst({
@@ -145,8 +145,8 @@ router.post('/change-password', authenticate, async (req, res, next) => {
       return res.status(400).json({ error: '旧密码和新密码不能为空' });
     }
 
-    if (newPassword.length < 6) {
-      return res.status(400).json({ error: '新密码至少 6 位' });
+    if (newPassword.length < 8) {
+      return res.status(400).json({ error: '新密码至少 8 位' });
     }
 
     const user = await prisma.user.findUnique({

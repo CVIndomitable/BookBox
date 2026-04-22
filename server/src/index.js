@@ -28,9 +28,6 @@ if (!process.env.DATABASE_URL) {
   console.error('❌ 致命错误：DATABASE_URL 未配置');
   process.exit(1);
 }
-if (!process.env.API_TOKEN) {
-  console.warn('⚠ 警告：API_TOKEN 未配置，所有认证请求将被拒绝');
-}
 if (!process.env.SUPPLIER_ENCRYPTION_KEY) {
   console.warn('⚠ 警告：SUPPLIER_ENCRYPTION_KEY 未配置，供应商 API Key 将无法加密/解密');
   console.warn('   生成方式：node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');

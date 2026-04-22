@@ -516,7 +516,9 @@ struct BoxingSessionView: View {
                 return
             }
             do {
-                let recognized = try await NetworkService.shared.recognizeBooks(imageData: compressed)
+                let recognized = try await RecognitionThrottle.shared.run {
+                    try await NetworkService.shared.recognizeBooks(imageData: compressed)
+                }
                 // 期间用户可能已切换箱子，此时当前 Session 不再有效
                 guard capturedBoxId == box.id else { return }
 

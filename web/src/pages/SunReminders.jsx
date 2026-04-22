@@ -1,16 +1,42 @@
 import { useState, useEffect } from 'react';
-import { sunReminders } from '../services/api';
+import { sunReminders, auth } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import './SunReminders.css';
 
 export default function SunReminders() {
   const [reminders, setReminders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [editingDays, setEditingDays] = useState(false);
+  const [daysDraft, setDaysDraft] = useState(0);
   const { user } = useAuth();
 
   useEffect(() => {
     loadReminders();
   }, []);
+
+  useEffect(() => {
+    if (user) setDaysDraft(user.defaultSunDays || 30);
+  }, [user]);
+
+  const handleSaveDays = async () => {
+    const n = parseInt(daysDraft, 10);
+    if (!Number.isInteger(n) || n < 1 || n > 365) {
+      alert('请输入 1-365 之间的整数');
+      return;
+    }
+    try {
+      await auth.updateMe({ defaultSunDays: n });
+      setEditingDays(false);
+      // 让上层 AuthProvider 也同步用户信息
+      const me = await auth.getMe();
+      if (me?.user) {
+        localStorage.setItem('user', JSON.stringify(me.user));
+        window.location.reload();
+      }
+    } catch (err) {
+      alert(err.error || '保存失败');
+    }
+  };
 
   const loadReminders = async () => {
     try {
@@ -68,8 +94,26 @@ export default function SunReminders() {
       <div className="reminders-content">
         <div className="settings-card">
           <h2>全局设置</h2>
-          <p>默认晒书间隔：{user.defaultSunDays} 天</p>
-          <button className="btn-secondary">修改</button>
+          {editingDays ? (
+            <div className="days-edit">
+              <input
+                type="number"
+                min="1"
+                max="365"
+                value={daysDraft}
+                onChange={(e) => setDaysDraft(e.target.value)}
+                className="days-input"
+              />
+              <span>天</span>
+              <button onClick={handleSaveDays} className="btn-primary-small">保存</button>
+              <button onClick={() => setEditingDays(false)} className="btn-secondary">取消</button>
+            </div>
+          ) : (
+            <>
+              <p>默认晒书间隔：{user?.defaultSunDays ?? 30} 天</p>
+              <button onClick={() => setEditingDays(true)} className="btn-secondary">修改</button>
+            </>
+          )}
         </div>
 
         <div className="reminders-list">

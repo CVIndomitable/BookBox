@@ -9,8 +9,22 @@ import {
   batchResolveLocationInfo,
   handleTxConflict,
 } from '../services/bookLocation.js';
+import { checkLibraryAccess, checkBookAccess } from '../middleware/auth.js';
 
 const router = Router();
+
+// 断言当前用户对目标 libraryId 至少是 member；供 batch / move 等多书操作内部使用
+async function assertMember(userId, libraryId, requiredRole = 'member') {
+  const rank = { owner: 3, admin: 2, member: 1 };
+  const m = await prisma.libraryMember.findUnique({
+    where: { userId_libraryId: { userId, libraryId } },
+  });
+  if (!m) return { ok: false, status: 403, error: '无权访问此书库' };
+  if (rank[m.role] < rank[requiredRole]) {
+    return { ok: false, status: 403, error: `需要 ${requiredRole} 权限` };
+  }
+  return { ok: true };
+}
 
 // 合法的地区模式
 const VALID_REGIONS = ['mainland', 'overseas'];
@@ -31,13 +45,13 @@ function parsePrice(raw) {
 }
 
 // 获取书籍列表（支持分页、搜索、按分类/状态/位置筛选）
-router.get('/', async (req, res, next) => {
+router.get('/', checkLibraryAccess('member'), async (req, res, next) => {
   try {
-    const { search, categoryId, verifyStatus, locationType, locationId, shelfId, boxId, libraryId } = req.query;
+    const { search, categoryId, verifyStatus, locationType, locationId, shelfId, boxId } = req.query;
     const { page, pageSize, skip, take } = parsePagination(req.query);
 
-    // 回收站里的书不出现在任何正常列表中
-    const where = { deletedAt: null };
+    // 回收站里的书不出现在任何正常列表中；强制按 libraryId 过滤避免跨库泄露
+    const where = { deletedAt: null, libraryId: req.libraryId };
 
     if (search) {
       where.OR = [
@@ -52,10 +66,6 @@ router.get('/', async (req, res, next) => {
 
     if (verifyStatus) {
       where.verifyStatus = verifyStatus;
-    }
-
-    if (libraryId) {
-      where.libraryId = parseId(libraryId, '书库 ID');
     }
 
     // 位置筛选
@@ -97,7 +107,7 @@ router.get('/', async (req, res, next) => {
 });
 
 // 新增书籍
-router.post('/', async (req, res, next) => {
+router.post('/', checkLibraryAccess('member'), async (req, res, next) => {
   try {
     const {
       title, author, isbn, publisher, publishDate, price, coverUrl,
@@ -175,12 +185,22 @@ router.post('/', async (req, res, next) => {
 // 查重：按「书名 + 出版社」精确匹配返回已存在的书
 // 请求体：{ books: [{title, publisher?}] }
 // 响应：{ duplicates: [{ index, existing: {id, title, publisher, author, libraryId, locationType, locationId} }] }
-// 规则：title 去首尾空白 + 小写后相等；请求未给 publisher 时只按书名匹配（AI 常漏出版社）；跨全部书库查重
+// 规则：title 去首尾空白 + 小写后相等；请求未给 publisher 时只按书名匹配（AI 常漏出版社）
+// 注意：只在当前用户有访问权的书库集合内查重，防止探测他人书籍
 router.post('/check-duplicates', async (req, res, next) => {
   try {
     const { books } = req.body || {};
     if (!Array.isArray(books) || books.length === 0) {
       return res.status(400).json({ error: '请提供书籍列表' });
+    }
+
+    const memberships = await prisma.libraryMember.findMany({
+      where: { userId: req.user.id },
+      select: { libraryId: true },
+    });
+    const allowedLibraryIds = memberships.map((m) => m.libraryId);
+    if (allowedLibraryIds.length === 0) {
+      return res.json({ duplicates: [] });
     }
 
     const norm = (s) => (s ?? '').toString().trim().toLowerCase();
@@ -193,9 +213,9 @@ router.post('/check-duplicates', async (req, res, next) => {
     // 一次性按候选书名的 OR 条件拉回来，再在内存里按精确规则匹配
     const where = {
       OR: titles.map((t) => ({ title: { equals: t } })),
+      libraryId: { in: allowedLibraryIds },
     };
 
-    // Prisma 默认 collation 对中文大小写不敏感，title equals 已够用；这里宽松一点用 contains 也能命中，但保持精确
     // 回收站里的书不参与查重
     where.deletedAt = null;
     const candidates = await prisma.book.findMany({
@@ -244,10 +264,20 @@ router.get('/duplicates', async (req, res, next) => {
   try {
     const norm = (s) => (s ?? '').toString().trim().toLowerCase();
 
+    // 限定在当前用户参与的书库集合内
+    const memberships = await prisma.libraryMember.findMany({
+      where: { userId: req.user.id },
+      select: { libraryId: true },
+    });
+    const allowedLibraryIds = memberships.map((m) => m.libraryId);
+    if (allowedLibraryIds.length === 0) {
+      return res.json({ groups: [], totalGroups: 0, totalDuplicateBooks: 0 });
+    }
+
     // 一次性拉全量书（只取查重所需字段），按分组逻辑在内存里聚合
     // 注：当前场景量级不大；若将来几十万本可改用 SQL GROUP BY
     const all = await prisma.book.findMany({
-      where: { deletedAt: null },
+      where: { deletedAt: null, libraryId: { in: allowedLibraryIds } },
       select: {
         id: true,
         title: true,
@@ -309,13 +339,13 @@ router.get('/duplicates', async (req, res, next) => {
   }
 });
 
-// 回收站：列出软删书籍
+// 回收站：列出软删书籍（必须指定 libraryId）
 // 必须声明在 /:id 之前，避免被通配路由捕获
 // 响应：{ data: [...books with locationInfo], retentionDays }
-router.get('/trash', async (req, res, next) => {
+router.get('/trash', checkLibraryAccess('member'), async (req, res, next) => {
   try {
     const books = await prisma.book.findMany({
-      where: { deletedAt: { not: null } },
+      where: { deletedAt: { not: null }, libraryId: req.libraryId },
       include: { category: true },
       orderBy: { deletedAt: 'desc' },
     });
@@ -337,7 +367,7 @@ router.get('/trash', async (req, res, next) => {
 
 // 回收站：还原一本书到原位（locationType/locationId 未动，只清 deletedAt）
 // 如果原容器已被删了，只把书还原到「未归位」
-router.post('/:id/restore', async (req, res, next) => {
+router.post('/:id/restore', checkBookAccess('member'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书籍 ID');
     const book = await prisma.book.findFirst({ where: { id, deletedAt: { not: null } } });
@@ -400,7 +430,7 @@ router.post('/:id/restore', async (req, res, next) => {
 });
 
 // 回收站：立即彻底删除一本书（跳过 30 天等待）
-router.delete('/:id/purge', async (req, res, next) => {
+router.delete('/:id/purge', checkBookAccess('admin'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书籍 ID');
     const book = await prisma.book.findFirst({ where: { id, deletedAt: { not: null } } });
@@ -436,7 +466,7 @@ router.post('/verify', async (req, res, next) => {
   }
 });
 
-// 批量新增书籍
+// 批量新增书籍（必须指定 libraryId 或由 location 推出）
 router.post('/batch', async (req, res, next) => {
   try {
     const { books, locationType, locationId, boxId, libraryId } = req.body;
@@ -444,6 +474,25 @@ router.post('/batch', async (req, res, next) => {
     if (!Array.isArray(books) || books.length === 0) {
       return res.status(400).json({ error: '请提供书籍列表' });
     }
+
+    // 判定最终 libraryId：优先 body.libraryId，其次从容器反查
+    let targetLibraryId = parseOptionalId(libraryId);
+    if (!targetLibraryId) {
+      const containerId = parseOptionalId(locationId) || parseOptionalId(boxId);
+      const containerType = locationType || (boxId ? 'box' : null);
+      if (containerType && containerId) {
+        const model = containerType === 'shelf' ? 'shelf' : containerType === 'box' ? 'box' : null;
+        if (model) {
+          const row = await prisma[model].findUnique({ where: { id: containerId }, select: { libraryId: true } });
+          targetLibraryId = row?.libraryId ?? null;
+        }
+      }
+    }
+    if (!targetLibraryId) {
+      return res.status(400).json({ error: '缺少书库 ID' });
+    }
+    const mm = await assertMember(req.user.id, targetLibraryId, 'member');
+    if (!mm.ok) return res.status(mm.status).json({ error: mm.error });
 
     // 兼容旧的 boxId 参数
     const finalLocationType = locationType || (boxId ? 'box' : 'none');
@@ -520,7 +569,7 @@ router.post('/batch', async (req, res, next) => {
 });
 
 // 获取书籍详情
-router.get('/:id', async (req, res, next) => {
+router.get('/:id', checkBookAccess('member'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书籍 ID');
     const book = await prisma.book.findFirst({
@@ -545,7 +594,7 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // 更新书籍信息
-router.put('/:id', async (req, res, next) => {
+router.put('/:id', checkBookAccess('member'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书籍 ID');
     const {
@@ -654,7 +703,7 @@ router.put('/:id', async (req, res, next) => {
 
 // 删除书籍 — 软删进回收站（保留 locationType/locationId，还原时能回到原位）
 // 30 天后由定时任务物理删除；容器 bookCount 立即重算（updateContainerCount 已过滤 deletedAt:null）
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', checkBookAccess('member'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书籍 ID');
 
@@ -700,7 +749,7 @@ router.delete('/:id', async (req, res, next) => {
 });
 
 // 移动书籍到指定位置
-router.post('/:id/move', async (req, res, next) => {
+router.post('/:id/move', checkBookAccess('member'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书籍 ID');
     const { toType, toId, method = 'manual', rawInput } = req.body;
@@ -720,6 +769,18 @@ router.post('/:id/move', async (req, res, next) => {
     // 位置类型非 none 时必须提供 toId
     if (toType !== 'none' && !targetId) {
       return res.status(400).json({ error: '指定位置类型时必须提供位置 ID' });
+    }
+
+    // 跨书库搬动时需校验对目标书库的成员身份
+    if (toType !== 'none' && targetId) {
+      const model = toType === 'shelf' ? 'shelf' : toType === 'box' ? 'box' : null;
+      if (model) {
+        const container = await prisma[model].findUnique({ where: { id: targetId }, select: { libraryId: true } });
+        if (container?.libraryId && container.libraryId !== req.libraryId) {
+          const mm = await assertMember(req.user.id, container.libraryId, 'member');
+          if (!mm.ok) return res.status(mm.status).json({ error: mm.error });
+        }
+      }
     }
 
     await prisma.$transaction(async (tx) => {
@@ -772,7 +833,7 @@ router.post('/:id/move', async (req, res, next) => {
 });
 
 // 获取单本书的操作历史
-router.get('/:id/logs', async (req, res, next) => {
+router.get('/:id/logs', checkBookAccess('member'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书籍 ID');
     const { page, pageSize, skip, take } = parsePagination(req.query);
@@ -797,8 +858,8 @@ router.get('/:id/logs', async (req, res, next) => {
   }
 });
 
-// 批量导入书籍
-router.post('/batch-import', async (req, res, next) => {
+// 批量导入书籍（要求 body.libraryId，所有书都将落在该书库）
+router.post('/batch-import', checkLibraryAccess('member'), async (req, res, next) => {
   try {
     const { books } = req.body;
 
@@ -818,7 +879,7 @@ router.post('/batch-import', async (req, res, next) => {
           publisher: bookData.publisher || null,
           publishDate: bookData.publishDate || null,
           price: parsePrice(bookData.price),
-          libraryId: bookData.libraryId || null,
+          libraryId: req.libraryId,
           locationType: bookData.locationType || 'none',
           locationId: bookData.locationId || null,
           verifyStatus: bookData.verifyStatus || 'manual'
@@ -834,15 +895,10 @@ router.post('/batch-import', async (req, res, next) => {
   }
 });
 
-// 导出书籍为 CSV（不含回收站）
-router.get('/export', async (req, res, next) => {
+// 导出书籍为 CSV（不含回收站；必须指定 libraryId）
+router.get('/export', checkLibraryAccess('member'), async (req, res, next) => {
   try {
-    const { libraryId } = req.query;
-    const where = { deletedAt: null };
-
-    if (libraryId) {
-      where.libraryId = parseInt(libraryId);
-    }
+    const where = { deletedAt: null, libraryId: req.libraryId };
 
     const booksList = await prisma.book.findMany({
       where,

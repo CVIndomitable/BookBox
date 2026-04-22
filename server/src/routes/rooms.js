@@ -1,19 +1,16 @@
 import { Router } from 'express';
 import prisma from '../utils/prisma.js';
-import { parseId, parseOptionalId } from '../utils/validate.js';
+import { parseId } from '../utils/validate.js';
 import { handleTxConflict } from '../services/bookLocation.js';
+import { checkLibraryAccess, checkContainerAccess } from '../middleware/auth.js';
 
 const router = Router();
 
-// 获取房间列表（支持按 libraryId 筛选）
-router.get('/', async (req, res, next) => {
+// 获取房间列表（必须指定 libraryId，且用户必须是该书库成员）
+router.get('/', checkLibraryAccess('member'), async (req, res, next) => {
   try {
-    const where = {};
-    const libraryId = parseOptionalId(req.query.libraryId);
-    if (libraryId) where.libraryId = libraryId;
-
     const rooms = await prisma.room.findMany({
-      where,
+      where: { libraryId: req.libraryId },
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
     });
     res.json(rooms);
@@ -22,8 +19,8 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-// 新建房间
-router.post('/', async (req, res, next) => {
+// 新建房间（必须是该书库 admin 或以上）
+router.post('/', checkLibraryAccess('admin'), async (req, res, next) => {
   try {
     const { name, description, libraryId } = req.body;
 
@@ -50,7 +47,7 @@ router.post('/', async (req, res, next) => {
 });
 
 // 房间详情（附带其中的书架/箱子）
-router.get('/:id', async (req, res, next) => {
+router.get('/:id', checkContainerAccess('room', 'member'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '房间 ID');
 
@@ -80,7 +77,7 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // 更新房间（name/description；默认房间不允许改名为空）
-router.put('/:id', async (req, res, next) => {
+router.put('/:id', checkContainerAccess('room', 'admin'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '房间 ID');
     const { name, description } = req.body;
@@ -104,7 +101,7 @@ router.put('/:id', async (req, res, next) => {
 // 删除房间
 // - 默认房间不允许删除
 // - 若房间下还有书架/箱子，将其转移到同书库的默认房间
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', checkContainerAccess('room', 'admin'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '房间 ID');
 

@@ -11,8 +11,18 @@ export function AuthProvider({ children }) {
     const token = localStorage.getItem('token');
     const savedUser = localStorage.getItem('user');
 
-    if (token && savedUser) {
-      setUser(JSON.parse(savedUser));
+    // localStorage 可能被破坏（跨站脚本污染、调试工具改错等）：保险 try-catch
+    let parsed = null;
+    if (savedUser) {
+      try {
+        parsed = JSON.parse(savedUser);
+      } catch {
+        parsed = null;
+      }
+    }
+
+    if (token && parsed) {
+      setUser(parsed);
       auth.getMe()
         .then(({ user }) => {
           setUser(user);
@@ -25,6 +35,8 @@ export function AuthProvider({ children }) {
         })
         .finally(() => setLoading(false));
     } else {
+      // 清理可能的半损坏状态
+      if (!parsed && savedUser) localStorage.removeItem('user');
       setLoading(false);
     }
   }, []);

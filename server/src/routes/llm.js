@@ -501,6 +501,19 @@ router.post('/voice-command', async (req, res, next) => {
 // 请求体：{ text, context?: { rooms, shelves, boxes } }
 // 响应：Server-Sent Events (text/event-stream)
 router.post('/voice-command-stream', async (req, res, next) => {
+  let reader = null;
+  let clientAborted = false;
+
+  // 客户端断开时取消 upstream reader，避免流式请求继续消耗 AI 配额
+  req.on('close', () => {
+    if (!res.writableEnded) {
+      clientAborted = true;
+      if (reader) {
+        reader.cancel().catch(() => {});
+      }
+    }
+  });
+
   try {
     const { text, context } = req.body;
     if (!text) {
@@ -523,11 +536,12 @@ router.post('/voice-command-stream', async (req, res, next) => {
     // 先发送供应商元信息
     res.write(`data: ${JSON.stringify({ type: 'supplier', supplier })}\n\n`);
 
-    const reader = stream.getReader();
+    reader = stream.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
 
     while (true) {
+      if (clientAborted) break;
       const { done, value } = await reader.read();
       if (done) break;
 
@@ -558,8 +572,10 @@ router.post('/voice-command-stream', async (req, res, next) => {
       }
     }
 
-    res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
-    res.end();
+    if (!clientAborted) {
+      res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+      res.end();
+    }
   } catch (err) {
     console.error('[LLM voice-command-stream]', err.message);
     if (!res.headersSent) {

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import prisma from '../utils/prisma.js';
 import { parseId, parsePagination, paginationResponse, resolveContainerPlacement } from '../utils/validate.js';
+import { checkLibraryAccess, checkContainerAccess } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -12,13 +13,10 @@ async function updateShelfCount(tx, shelfId) {
   await tx.shelf.update({ where: { id: shelfId }, data: { bookCount: count } });
 }
 
-// 获取所有书架列表（支持按书库/房间筛选）
-router.get('/', async (req, res, next) => {
+// 获取所有书架列表（必须指定 libraryId，且用户必须是该书库成员）
+router.get('/', checkLibraryAccess('member'), async (req, res, next) => {
   try {
-    const where = {};
-    if (req.query.libraryId) {
-      where.libraryId = parseId(req.query.libraryId, '书库 ID');
-    }
+    const where = { libraryId: req.libraryId };
     if (req.query.roomId) {
       where.roomId = parseId(req.query.roomId, '房间 ID');
     }
@@ -34,8 +32,8 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-// 新建书架（libraryId 与 roomId 保持一致；只传 libraryId 时自动选默认房间）
-router.post('/', async (req, res, next) => {
+// 新建书架（必须是该书库 admin 或以上）
+router.post('/', checkLibraryAccess('admin'), async (req, res, next) => {
   try {
     const { name, location, description, libraryId, roomId } = req.body;
 
@@ -57,7 +55,7 @@ router.post('/', async (req, res, next) => {
 });
 
 // 获取书架详情及其中的书（分页）
-router.get('/:id', async (req, res, next) => {
+router.get('/:id', checkContainerAccess('shelf', 'member'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书架 ID');
     const { page, pageSize, skip, take } = parsePagination(req.query);
@@ -93,7 +91,7 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // 更新书架信息（支持搬动：roomId 或 libraryId 任一传入都会重新计算归属）
-router.put('/:id', async (req, res, next) => {
+router.put('/:id', checkContainerAccess('shelf', 'admin'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书架 ID');
     const { name, location, description, libraryId, roomId } = req.body;
@@ -108,6 +106,15 @@ router.put('/:id', async (req, res, next) => {
     const hasLib = Object.prototype.hasOwnProperty.call(req.body, 'libraryId');
     if (hasRoom || hasLib) {
       const placement = await resolveContainerPlacement(prisma, { libraryId, roomId });
+      // 若要搬到另一个书库，要求用户对目标书库也是 admin
+      if (placement.libraryId && placement.libraryId !== req.libraryId) {
+        const targetMembership = await prisma.libraryMember.findUnique({
+          where: { userId_libraryId: { userId: req.user.id, libraryId: placement.libraryId } },
+        });
+        if (!targetMembership || (targetMembership.role !== 'owner' && targetMembership.role !== 'admin')) {
+          return res.status(403).json({ error: '无权搬动到目标书库' });
+        }
+      }
       data.libraryId = placement.libraryId;
       data.roomId = placement.roomId;
     }
@@ -125,7 +132,7 @@ router.put('/:id', async (req, res, next) => {
 });
 
 // 删除书架（书的 location 重置为 none，并记录日志）
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', checkContainerAccess('shelf', 'admin'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书架 ID');
 
@@ -176,7 +183,7 @@ router.delete('/:id', async (req, res, next) => {
 });
 
 // 批量将书放入书架
-router.post('/:id/books', async (req, res, next) => {
+router.post('/:id/books', checkContainerAccess('shelf', 'member'), async (req, res, next) => {
   try {
     const shelfId = parseId(req.params.id, '书架 ID');
     const { bookIds } = req.body;
@@ -251,7 +258,7 @@ router.post('/:id/books', async (req, res, next) => {
 });
 
 // 从书架移走一本书（location 重置为 none）
-router.delete('/:id/books/:bookId', async (req, res, next) => {
+router.delete('/:id/books/:bookId', checkContainerAccess('shelf', 'member'), async (req, res, next) => {
   try {
     const shelfId = parseId(req.params.id, '书架 ID');
     const bookId = parseId(req.params.bookId, '书籍 ID');

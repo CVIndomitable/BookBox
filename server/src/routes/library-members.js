@@ -28,8 +28,8 @@ router.get('/:libraryId/members', authenticate, checkLibraryAccess('member'), as
   }
 });
 
-// 添加成员
-router.post('/:libraryId/members', authenticate, checkLibraryAccess('admin'), async (req, res, next) => {
+// 添加成员（仅 owner 可邀请）
+router.post('/:libraryId/members', authenticate, checkLibraryAccess('owner'), async (req, res, next) => {
   try {
     const libraryId = parseInt(req.params.libraryId);
     const { username, role = 'member' } = req.body;

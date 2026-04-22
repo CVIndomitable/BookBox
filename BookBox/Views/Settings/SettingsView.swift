@@ -26,7 +26,13 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    LabeledContent("服务器地址", value: AppConfig.current.serverBaseURL)
+                    LabeledContent("服务器地址", value: AppConfig.current)
+                    if let username = AuthService.shared.user?.username {
+                        LabeledContent("当前用户", value: username)
+                    }
+                    Button("退出登录", role: .destructive) {
+                        AuthService.shared.clear()
+                    }
                         .font(.caption)
                 } header: {
                     Text("服务器")

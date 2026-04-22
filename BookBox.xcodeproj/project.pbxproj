@@ -15,6 +15,7 @@
 		0F4498971114F24E708358D0 /* BookDetailsScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E5A8A64C9C2397E13C056C5 /* BookDetailsScanView.swift */; };
 		110393060CAE1D7D651DA973 /* RoomDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CFB9CC6A3C89D8076633971 /* RoomDetailView.swift */; };
 		11CBC4F2609828127402EADF /* OCRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17DADC7179D9ECB375C20145 /* OCRService.swift */; };
+		145E3C9A91742D6947187A4F /* AuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FB89F9C882D4463A66E705E /* AuthService.swift */; };
 		16FA5ED259602EA726D33165 /* BookRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81F13D92E33A90BA5207F989 /* BookRow.swift */; };
 		1727361B535858399FC67DBB /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37EE56E29F96C5D1E3C3D93C /* AppConfig.swift */; };
 		18D88080043FF556F1F445C7 /* Library.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0209C1774CD42652B4013A96 /* Library.swift */; };
@@ -25,11 +26,13 @@
 		2D63E050D5EC7382CE28045C /* Room.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F466B1B1B4AF472E8C3FC9E /* Room.swift */; };
 		2DB7234907419E6DBAAA9883 /* BookDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60602FEFCC9F6157C9178732 /* BookDetailView.swift */; };
 		2E9EE63C3321BD31493E634A /* ShelfDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B181C522B728023396F7B8C1 /* ShelfDetailView.swift */; };
+		394D8077A9E7014BFFD5B207 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50453EEF24E1434BDAF76708 /* LoginView.swift */; };
 		3B84DFAFC0AB61ACC81A4160 /* BookLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8DAAB00E696C7DA8769C3CD /* BookLog.swift */; };
 		3C08B6FF967376110021F01F /* BoxDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5610B6F8ACC0DB6F46981C6B /* BoxDetailView.swift */; };
 		3D2373930FC9AD9B05264657 /* TrashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7780476CCE333747B48B39EA /* TrashView.swift */; };
 		40667AFF79A0CA2AAC108852 /* ScanHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 646125A715F5C0D2292DB19B /* ScanHistoryView.swift */; };
 		4E5E262C6307AD815B25EF8D /* DuplicateCheckView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57E47EA947E84798F191F2E4 /* DuplicateCheckView.swift */; };
+		51874F30C81FD8C96CF4D4AB /* RecognitionThrottle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48771DDF6650E6BC5B916DC6 /* RecognitionThrottle.swift */; };
 		58BF1856E10ABE7D89DFCD3C /* SpeechService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97795F10BDB85511F494F9C2 /* SpeechService.swift */; };
 		5C881858F954CA42384AA9E8 /* BookBoxApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFFCF14F8C425F44F81BFC96 /* BookBoxApp.swift */; };
 		614B5EBBC463B63ADD19B342 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E8312257E727308ECF0B481 /* LibraryView.swift */; };
@@ -71,6 +74,7 @@
 
 /* Begin PBXFileReference section */
 		0209C1774CD42652B4013A96 /* Library.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Library.swift; sourceTree = "<group>"; };
+		0FB89F9C882D4463A66E705E /* AuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthService.swift; sourceTree = "<group>"; };
 		17DADC7179D9ECB375C20145 /* OCRService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OCRService.swift; sourceTree = "<group>"; };
 		184D6A0C09A2392CA0FB8B8D /* BookBoxShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookBoxShortcuts.swift; sourceTree = "<group>"; };
 		1D96B699D9DACDB0EFA4D631 /* MoveBookSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoveBookSheet.swift; sourceTree = "<group>"; };
@@ -86,7 +90,9 @@
 		3F466B1B1B4AF472E8C3FC9E /* Room.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Room.swift; sourceTree = "<group>"; };
 		401709C568DBE7429214E8BD /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		4716A44FF858A8917A68644B /* AIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIModels.swift; sourceTree = "<group>"; };
+		48771DDF6650E6BC5B916DC6 /* RecognitionThrottle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecognitionThrottle.swift; sourceTree = "<group>"; };
 		4C925B3F888C0A848A3364C6 /* SupplierDegradationBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupplierDegradationBanner.swift; sourceTree = "<group>"; };
+		50453EEF24E1434BDAF76708 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		510C602B0177DAC68BE4704A /* UserSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserSettings.swift; sourceTree = "<group>"; };
 		556C51C658E32071D29C970B /* BoxListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoxListView.swift; sourceTree = "<group>"; };
 		5610B6F8ACC0DB6F46981C6B /* BoxDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoxDetailView.swift; sourceTree = "<group>"; };
@@ -182,11 +188,13 @@
 			children = (
 				4716A44FF858A8917A68644B /* AIModels.swift */,
 				38491142AA337858E9959972 /* AssistantEngine.swift */,
+				0FB89F9C882D4463A66E705E /* AuthService.swift */,
 				A4AB61EFC5CD4F84D6A43D98 /* BookExtractor.swift */,
 				1FDA7E4FFE7CA550994B0241 /* Error+Chinese.swift */,
 				330505216BFB18DF280898F3 /* LocalMLService.swift */,
 				78FA87A915B0810A2881A72F /* NetworkService.swift */,
 				17DADC7179D9ECB375C20145 /* OCRService.swift */,
+				48771DDF6650E6BC5B916DC6 /* RecognitionThrottle.swift */,
 				97795F10BDB85511F494F9C2 /* SpeechService.swift */,
 				A39A845CC8E94221225A822C /* SupplierStatusStore.swift */,
 			);
@@ -199,6 +207,14 @@
 				C901FFDB25FCA035AD1AD26D /* SettingsView.swift */,
 			);
 			path = Settings;
+			sourceTree = "<group>";
+		};
+		592FE45548F1323B4A4C42D3 /* Auth */ = {
+			isa = PBXGroup;
+			children = (
+				50453EEF24E1434BDAF76708 /* LoginView.swift */,
+			);
+			path = Auth;
 			sourceTree = "<group>";
 		};
 		869690DBD1020C80834AE64C /* Intents */ = {
@@ -237,6 +253,7 @@
 			children = (
 				BC45B17F54D6C2B526A2BAEC /* AssistantTabView.swift */,
 				401709C568DBE7429214E8BD /* HomeView.swift */,
+				592FE45548F1323B4A4C42D3 /* Auth */,
 				97C5AA59DA0464277B660A23 /* Boxing */,
 				37D0887F599BD42E6CC4B112 /* Components */,
 				F2CA0C73368B322DC0C558B1 /* Library */,
@@ -382,6 +399,7 @@
 				1727361B535858399FC67DBB /* AppConfig.swift in Sources */,
 				269BF96F6AB3C9B7ED5AFEEA /* AssistantEngine.swift in Sources */,
 				A8D63C23076FBFA3A75186EC /* AssistantTabView.swift in Sources */,
+				145E3C9A91742D6947187A4F /* AuthService.swift in Sources */,
 				C3D2E3C7EE86E95422EBA79F /* Book.swift in Sources */,
 				5C881858F954CA42384AA9E8 /* BookBoxApp.swift in Sources */,
 				A34BBFBD2967F60E7EF9FDB2 /* BookBoxShortcuts.swift in Sources */,
@@ -412,6 +430,7 @@
 				614B5EBBC463B63ADD19B342 /* LibraryView.swift in Sources */,
 				21BAE2DC0D9ED0F261E35397 /* LlmSupplier.swift in Sources */,
 				E81EC073A12543762387F207 /* LocalMLService.swift in Sources */,
+				394D8077A9E7014BFFD5B207 /* LoginView.swift in Sources */,
 				007AFB637DC8CFA61A24BC23 /* LogsView.swift in Sources */,
 				722A55B5B60484296F63FD2F /* MoveBookIntent.swift in Sources */,
 				CDB95B51E66A2134A2201E54 /* MoveBookSheet.swift in Sources */,
@@ -419,6 +438,7 @@
 				11CBC4F2609828127402EADF /* OCRService.swift in Sources */,
 				D57ACAEB3EA43CFE7A7C61EA /* PreClassifyView.swift in Sources */,
 				C7358AC4094B137D669FDC86 /* QueryLibraryIntent.swift in Sources */,
+				51874F30C81FD8C96CF4D4AB /* RecognitionThrottle.swift in Sources */,
 				2D63E050D5EC7382CE28045C /* Room.swift in Sources */,
 				A042BA58403C8649B23EF9AC /* RoomCreateView.swift in Sources */,
 				110393060CAE1D7D651DA973 /* RoomDetailView.swift in Sources */,

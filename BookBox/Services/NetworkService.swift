@@ -63,10 +63,7 @@ final class NetworkService: ObservableObject {
     @Published var isLoading = false
 
     /// 服务器地址（根据编译配置切换）
-    let baseURL = AppConfig.current.serverBaseURL
-
-    /// 认证 token（根据编译配置切换）
-    let apiToken = AppConfig.current.apiToken
+    let baseURL = AppConfig.current
 
     private let session: URLSession
     private let decoder: JSONDecoder
@@ -131,7 +128,9 @@ final class NetworkService: ObservableObject {
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = method
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
+        if let token = AuthService.shared.token {
+            urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
 
         // 非幂等写请求带一个稳定的 X-Request-Id，网络抖动重试时服务端可识别去重，
         // 避免重复下单/建书。GET 天然幂等，不需要 ID。
@@ -196,6 +195,10 @@ final class NetworkService: ObservableObject {
             #if DEBUG
             print("[NET] HTTP 错误: \(httpResponse.statusCode) - \(message ?? "无内容")")
             #endif
+            // 401 视为登录态失效，清 token 触发 LoginView
+            if httpResponse.statusCode == 401 {
+                AuthService.shared.clear()
+            }
             throw NetworkError.httpError(httpResponse.statusCode, message)
         }
 
@@ -219,6 +222,35 @@ final class NetworkService: ObservableObject {
     /// 详细连通性检测（服务器、数据库、AI）
     func checkHealth() async throws -> HealthCheckResult {
         try await request("GET", path: "/health/detailed", timeout: 15)
+    }
+
+    // MARK: - 认证 API
+
+    struct LoginRequest: Codable { let username: String; let password: String }
+    struct RegisterRequest: Codable {
+        let username: String
+        let password: String
+        let email: String?
+        let displayName: String?
+    }
+    struct AuthResponse: Codable { let user: AuthUser; let token: String }
+
+    func login(username: String, password: String) async throws {
+        let resp: AuthResponse = try await request(
+            "POST",
+            path: "/auth/login",
+            body: LoginRequest(username: username, password: password)
+        )
+        AuthService.shared.setSession(token: resp.token, user: resp.user)
+    }
+
+    func register(username: String, password: String, email: String?, displayName: String?) async throws {
+        let resp: AuthResponse = try await request(
+            "POST",
+            path: "/auth/register",
+            body: RegisterRequest(username: username, password: password, email: email, displayName: displayName)
+        )
+        AuthService.shared.setSession(token: resp.token, user: resp.user)
     }
 
     // MARK: - 书库 API

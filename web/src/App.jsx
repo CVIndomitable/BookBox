@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './hooks/useAuth';
+import ErrorBoundary from './components/ErrorBoundary';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Home from './pages/Home';
@@ -28,17 +29,19 @@ function PublicRoute({ children }) {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <Routes>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <AuthProvider>
+          <Routes>
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
           <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
           <Route path="/" element={<PrivateRoute><Home /></PrivateRoute>} />
           <Route path="/library/:id" element={<PrivateRoute><LibraryDetail /></PrivateRoute>} />
           <Route path="/reminders" element={<PrivateRoute><SunReminders /></PrivateRoute>} />
-          <Route path="*" element={<Navigate to="/" />} />
-        </Routes>
-      </AuthProvider>
-    </BrowserRouter>
+            <Route path="*" element={<Navigate to="/" />} />
+          </Routes>
+        </AuthProvider>
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 }
