@@ -625,6 +625,58 @@ final class NetworkService: ObservableObject {
         if let mode { queryItems.append(URLQueryItem(name: "mode", value: mode.rawValue)) }
         return try await request("GET", path: "/scans", queryItems: queryItems)
     }
+
+    // MARK: - 封面上传 API
+
+    func uploadCover(bookId: Int, imageData: Data) async throws -> Book {
+        guard var components = URLComponents(string: baseURL + "/covers/\(bookId)") else {
+            throw NetworkError.invalidURL
+        }
+        guard let url = components.url else {
+            throw NetworkError.invalidURL
+        }
+
+        let boundary = UUID().uuidString
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        if let token = AuthService.shared.token {
+            urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        urlRequest.setValue(UUID().uuidString, forHTTPHeaderField: "X-Request-Id")
+
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"cover\"; filename=\"cover.jpg\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
+        body.append(imageData)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+
+        urlRequest.httpBody = body
+
+        isLoading = true
+        defer { isLoading = false }
+
+        let (data, response) = try await session.data(for: urlRequest)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let message = String(data: data, encoding: .utf8)
+            if httpResponse.statusCode == 401 {
+                AuthService.shared.clear()
+            }
+            throw NetworkError.httpError(httpResponse.statusCode, message)
+        }
+
+        return try decoder.decode(Book.self, from: data)
+    }
+
+    func deleteCover(bookId: Int) async throws -> Book {
+        try await request("DELETE", path: "/covers/\(bookId)")
+    }
 }
 
 /// 空响应体

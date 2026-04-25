@@ -20,8 +20,14 @@ import suppliersRouter from './routes/suppliers.js';
 import authRouter from './routes/auth.js';
 import libraryMembersRouter from './routes/library-members.js';
 import sunRemindersRouter from './routes/sun-reminders.js';
+import coversRouter from './routes/covers.js';
 import { pingSupplier } from './utils/llmPool.js';
 import { initAPNs, startSunReminderScheduler } from './services/push-notification.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // 启动时检查关键环境变量
 if (!process.env.DATABASE_URL) {
@@ -81,6 +87,9 @@ const llmLimiter = rateLimit({
   message: { error: 'AI 识别请求过于频繁，请稍后再试' },
 });
 app.use('/api/llm', llmLimiter);
+
+// 静态文件服务（封面图片）
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // 健康检查（无需认证）
 app.get('/api/health', (req, res) => {
@@ -176,6 +185,7 @@ app.use('/api/llm', llmRouter);
 app.use('/api/suppliers', suppliersRouter);
 app.use('/api/library-members', libraryMembersRouter);
 app.use('/api/sun-reminders', sunRemindersRouter);
+app.use('/api/covers', coversRouter);
 
 // 全局错误处理
 app.use((err, req, res, next) => {
