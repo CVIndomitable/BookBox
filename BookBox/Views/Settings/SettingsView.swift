@@ -158,7 +158,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Picker("交互方式", selection: Binding(
+                    Picker("助手功能", selection: Binding(
                         get: { AssistantMode(rawValue: assistantModeRaw) ?? .off },
                         set: { assistantModeRaw = $0.rawValue }
                     )) {
@@ -169,7 +169,7 @@ struct SettingsView: View {
                 } header: {
                     Text("应用内助手")
                 } footer: {
-                    Text("语音悬浮：右下角悬浮麦克风按钮。文字输入：底部新增\"助手\"Tab，键盘输入指令。关闭后仍可通过 Siri 使用语音指令。")
+                    Text("开启后在底部显示「助手」Tab，支持文字输入和语音输入/输出。关闭后仍可通过 Siri 快捷指令使用语音功能。")
                 }
 
                 Section {

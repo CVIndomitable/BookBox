@@ -24,7 +24,7 @@ struct HomeView: View {
                 }
                 .tag(1)
 
-            if mode == .text {
+            if mode == .on {
                 AssistantTabView()
                     .tabItem {
                         Label("助手", systemImage: "sparkles")
@@ -103,13 +103,11 @@ struct ScanEntryView: View {
                 NavigationStack {
                     PreClassifyView()
                 }
-                .withVoiceAssistant()
             }
             .fullScreenCover(isPresented: $showBoxing) {
                 NavigationStack {
                     BoxingView()
                 }
-                .withVoiceAssistant()
             }
         }
     }
