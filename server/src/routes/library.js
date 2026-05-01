@@ -23,9 +23,9 @@ async function getAccessibleLibraryIds(userId) {
 }
 
 // 书库总览（支持按 libraryId 筛选）
-// 注意：totalBooks 必须严格按书库独立计算 —— 由显示出的 shelves/boxes.bookCount
-// 之和 + 本库未归位书籍构成。不使用 book.libraryId 作为统计依据，避免历史数据
-// 中 book.libraryId 与实际容器归属漂移时导致跨库计数
+// 注意：totalBooks 由容器内书籍（通过 bookCount 汇总）+ 未归位书籍（通过 book.libraryId 过滤）构成。
+// 依赖回填脚本（backfill-book-library-id.js）保证 book.libraryId 与实际位置一致。
+// 未归位书籍的 libraryId 表示其最后所属的书库（导入时指定或从容器移出前的原书库）
 router.get('/overview', async (req, res, next) => {
   try {
     const libraryId = parseLibraryId(req.query.libraryId);
