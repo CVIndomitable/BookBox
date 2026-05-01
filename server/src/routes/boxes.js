@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import prisma from '../utils/prisma.js';
 import { parseId, parsePagination, paginationResponse, resolveContainerPlacement } from '../utils/validate.js';
-import { checkLibraryAccess, checkContainerAccess } from '../middleware/auth.js';
+import { authenticate, checkLibraryAccess, checkContainerAccess } from '../middleware/auth.js';
 
 const router = Router();
 

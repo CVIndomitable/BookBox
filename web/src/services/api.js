@@ -68,6 +68,16 @@ export const books = {
   export: (params) => api.get('/books/export', { params, responseType: 'blob' })
 };
 
+export const boxes = {
+  list: (params) => api.get('/boxes', { params }),
+  get: (id) => api.get(`/boxes/${id}`),
+  create: (data) => api.post('/boxes', data),
+  update: (id, data) => api.put(`/boxes/${id}`, data),
+  delete: (id) => api.delete(`/boxes/${id}`),
+  addBooks: (id, bookIds) => api.post(`/boxes/${id}/books`, { bookIds }),
+  removeBook: (id, bookId) => api.delete(`/boxes/${id}/books/${bookId}`)
+};
+
 export const sunReminders = {
   list: () => api.get('/sun-reminders'),
   createForLibrary: (libraryId, data) => api.post(`/sun-reminders/library/${libraryId}`, data),
