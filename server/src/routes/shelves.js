@@ -1,22 +1,46 @@
 import { Router } from 'express';
 import prisma from '../utils/prisma.js';
 import { parseId, parsePagination, paginationResponse, resolveContainerPlacement } from '../utils/validate.js';
-import { checkLibraryAccess, checkContainerAccess } from '../middleware/auth.js';
+import { authenticate, checkLibraryAccess, checkContainerAccess } from '../middleware/auth.js';
 
 const router = Router();
 
 // 更新书架的 book_count（统一用 COUNT 重算）
 async function updateShelfCount(tx, shelfId) {
   const count = await tx.book.count({
-    where: { locationType: 'shelf', locationId: shelfId },
+    where: { locationType: 'shelf', locationId: shelfId, deletedAt: null },
   });
   await tx.shelf.update({ where: { id: shelfId }, data: { bookCount: count } });
 }
 
-// 获取所有书架列表（必须指定 libraryId，且用户必须是该书库成员）
-router.get('/', checkLibraryAccess('member'), async (req, res, next) => {
+// 获取书架列表（可选 libraryId：传了则返回该书库的书架，不传则返回用户所有书库的书架）
+router.get('/', authenticate, async (req, res, next) => {
   try {
-    const where = { libraryId: req.libraryId };
+    const where = {};
+
+    // 如果指定了 libraryId，校验权限并过滤
+    if (req.query.libraryId) {
+      const libraryId = parseId(req.query.libraryId, '书库 ID');
+      const membership = await prisma.libraryMember.findUnique({
+        where: { userId_libraryId: { userId: req.user.id, libraryId } },
+      });
+      if (!membership) {
+        return res.status(403).json({ error: '无权访问此书库' });
+      }
+      where.libraryId = libraryId;
+    } else {
+      // 不传 libraryId：返回用户所有书库的书架
+      const memberships = await prisma.libraryMember.findMany({
+        where: { userId: req.user.id },
+        select: { libraryId: true },
+      });
+      const libraryIds = memberships.map(m => m.libraryId);
+      if (libraryIds.length === 0) {
+        return res.json([]);
+      }
+      where.libraryId = { in: libraryIds };
+    }
+
     if (req.query.roomId) {
       where.roomId = parseId(req.query.roomId, '房间 ID');
     }
@@ -42,6 +66,9 @@ router.post('/', checkLibraryAccess('admin'), async (req, res, next) => {
     }
 
     const placement = await resolveContainerPlacement(prisma, { libraryId, roomId });
+    if (placement.libraryId !== req.libraryId) {
+      return res.status(403).json({ error: '无权在目标书库创建书架' });
+    }
 
     const shelf = await prisma.shelf.create({
       data: { name, location, description, ...placement },
@@ -191,6 +218,7 @@ router.post('/:id/books', checkContainerAccess('shelf', 'member'), async (req, r
     if (!Array.isArray(bookIds) || bookIds.length === 0) {
       return res.status(400).json({ error: '请提供书籍 ID 列表' });
     }
+    const uniqueBookIds = [...new Set(bookIds.map((v) => parseId(v, '书籍 ID')))];
 
     const shelf = await prisma.shelf.findUnique({ where: { id: shelfId } });
     if (!shelf) {
@@ -199,8 +227,11 @@ router.post('/:id/books', checkContainerAccess('shelf', 'member'), async (req, r
 
     // 获取这些书的当前位置，用于记录日志
     const books = await prisma.book.findMany({
-      where: { id: { in: bookIds }, deletedAt: null },
+      where: { id: { in: uniqueBookIds }, deletedAt: null, libraryId: req.libraryId },
     });
+    if (books.length !== uniqueBookIds.length) {
+      return res.status(403).json({ error: '部分书籍不存在或无权访问' });
+    }
 
     await prisma.$transaction(async (tx) => {
       // 收集需要更新 book_count 的旧容器
@@ -215,7 +246,7 @@ router.post('/:id/books', checkContainerAccess('shelf', 'member'), async (req, r
       const updateData = { locationType: 'shelf', locationId: shelfId };
       if (shelf.libraryId) updateData.libraryId = shelf.libraryId;
       await tx.book.updateMany({
-        where: { id: { in: bookIds } },
+        where: { id: { in: uniqueBookIds }, deletedAt: null, libraryId: req.libraryId },
         data: updateData,
       });
 
@@ -250,7 +281,7 @@ router.post('/:id/books', checkContainerAccess('shelf', 'member'), async (req, r
       });
     }, { isolationLevel: 'Serializable' });
 
-    res.json({ message: `已将 ${bookIds.length} 本书放入书架` });
+    res.json({ message: `已将 ${books.length} 本书放入书架` });
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     next(err);

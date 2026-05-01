@@ -115,6 +115,51 @@ function cleanBase64Image(raw) {
   return b64;
 }
 
+function httpError(statusCode, message) {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  return err;
+}
+
+// 书籍搜索类 LLM 接口只能读取当前用户有权限的书库。
+// 未指定 libraryId 时，"跨全部库"仅表示跨当前用户参与的全部书库。
+async function resolveBookScope(req, libraryId) {
+  const baseWhere = { deletedAt: null };
+
+  if (libraryId !== undefined && libraryId !== null && libraryId !== '') {
+    const id = Number(libraryId);
+    if (!Number.isInteger(id) || id <= 0) {
+      throw httpError(400, 'libraryId 非法');
+    }
+
+    const membership = await prisma.libraryMember.findUnique({
+      where: { userId_libraryId: { userId: req.user.id, libraryId: id } },
+      include: { library: { select: { name: true } } },
+    });
+    if (!membership) {
+      throw httpError(403, '无权访问此书库');
+    }
+
+    return {
+      baseWhere: { ...baseWhere, libraryId: id },
+      libId: id,
+      libraryName: membership.library?.name ?? null,
+    };
+  }
+
+  const memberships = await prisma.libraryMember.findMany({
+    where: { userId: req.user.id },
+    select: { libraryId: true },
+  });
+  const allowedLibraryIds = memberships.map((m) => m.libraryId);
+
+  return {
+    baseWhere: { ...baseWhere, libraryId: { in: allowedLibraryIds } },
+    libId: null,
+    libraryName: null,
+  };
+}
+
 // 将供应商池失败中的常见错误信息归一化为用户可读的中文
 // 附上最后一家失败原因，方便一眼看出是 key 挂了、限流、还是模型没配
 function humanizeSupplierError(err) {
@@ -238,6 +283,8 @@ router.post('/extract-book-details', async (req, res, next) => {
       return res.status(400).json({ error: '缺少图片数据' });
     }
 
+    const { baseWhere } = await resolveBookScope(req, libraryId);
+
     const cleanedImage = cleanBase64Image(image);
     if (!cleanedImage) {
       return res.status(400).json({ error: '图片数据格式无效，请重新拍照' });
@@ -304,13 +351,6 @@ router.post('/extract-book-details', async (req, res, next) => {
     }
 
     const cleanedExtracted = { title, author, isbn, publisher, publishDate, price };
-
-    // 基础过滤：排除回收站
-    const baseWhere = { deletedAt: null };
-    if (libraryId !== undefined && libraryId !== null && libraryId !== '') {
-      const id = Number(libraryId);
-      if (Number.isInteger(id) && id > 0) baseWhere.libraryId = id;
-    }
 
     let match = null;
     let matchReason = null;
@@ -620,20 +660,7 @@ router.post('/find-book', async (req, res, next) => {
 
     const aiEnabled = useAI !== false; // 默认开启，调用方显式传 false 才关闭
 
-    // 基础过滤：排除回收站
-    const baseWhere = { deletedAt: null };
-    let libraryName = null;
-    let libId = null;
-    if (libraryId !== undefined && libraryId !== null && libraryId !== '') {
-      const id = Number(libraryId);
-      if (!Number.isInteger(id) || id <= 0) {
-        return res.status(400).json({ error: 'libraryId 非法' });
-      }
-      baseWhere.libraryId = id;
-      libId = id;
-      const lib = await prisma.library.findUnique({ where: { id } });
-      libraryName = lib?.name ?? null;
-    }
+    const { baseWhere, libId, libraryName } = await resolveBookScope(req, libraryId);
 
     // Tier 1：原生子串匹配（命中直接返回，零额外开销）
     const strict = await prisma.book.findMany({

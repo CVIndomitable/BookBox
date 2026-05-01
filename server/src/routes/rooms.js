@@ -2,19 +2,45 @@ import { Router } from 'express';
 import prisma from '../utils/prisma.js';
 import { parseId } from '../utils/validate.js';
 import { handleTxConflict } from '../services/bookLocation.js';
-import { checkLibraryAccess, checkContainerAccess } from '../middleware/auth.js';
+import { authenticate, checkLibraryAccess, checkContainerAccess } from '../middleware/auth.js';
 
 const router = Router();
 
-// 获取房间列表（必须指定 libraryId，且用户必须是该书库成员）
-router.get('/', checkLibraryAccess('member'), async (req, res, next) => {
+// 获取房间列表（可选 libraryId：传了则返回该书库的房间，不传则返回用户所有书库的房间）
+router.get('/', authenticate, async (req, res, next) => {
   try {
+    const where = {};
+
+    // 如果指定了 libraryId，校验权限并过滤
+    if (req.query.libraryId) {
+      const libraryId = parseId(req.query.libraryId, '书库 ID');
+      const membership = await prisma.libraryMember.findUnique({
+        where: { userId_libraryId: { userId: req.user.id, libraryId } },
+      });
+      if (!membership) {
+        return res.status(403).json({ error: '无权访问此书库' });
+      }
+      where.libraryId = libraryId;
+    } else {
+      // 不传 libraryId：返回用户所有书库的房间
+      const memberships = await prisma.libraryMember.findMany({
+        where: { userId: req.user.id },
+        select: { libraryId: true },
+      });
+      const libraryIds = memberships.map(m => m.libraryId);
+      if (libraryIds.length === 0) {
+        return res.json([]);
+      }
+      where.libraryId = { in: libraryIds };
+    }
+
     const rooms = await prisma.room.findMany({
-      where: { libraryId: req.libraryId },
+      where,
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
     });
     res.json(rooms);
   } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     next(err);
   }
 });

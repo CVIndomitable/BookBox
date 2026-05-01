@@ -13,8 +13,34 @@ const __dirname = path.dirname(__filename);
 const router = Router();
 
 const UPLOAD_DIR = path.join(__dirname, '../../uploads/covers');
+const COVER_URL_PREFIX = '/uploads/covers/';
 
 await fs.mkdir(UPLOAD_DIR, { recursive: true });
+
+function coverPathFromUrl(coverUrl) {
+  if (typeof coverUrl !== 'string' || !coverUrl.startsWith(COVER_URL_PREFIX)) {
+    return null;
+  }
+  const filename = coverUrl.slice(COVER_URL_PREFIX.length);
+  if (!filename || filename.includes('/') || filename.includes('\\')) {
+    return null;
+  }
+  const resolved = path.resolve(UPLOAD_DIR, filename);
+  if (!resolved.startsWith(path.resolve(UPLOAD_DIR) + path.sep)) {
+    return null;
+  }
+  return resolved;
+}
+
+async function unlinkStoredCover(coverUrl) {
+  const filePath = coverPathFromUrl(coverUrl);
+  if (!filePath) return;
+  try {
+    await fs.unlink(filePath);
+  } catch (err) {
+    console.warn(`删除封面文件失败: ${filePath}`, err.message);
+  }
+}
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -57,12 +83,7 @@ router.post('/:bookId', checkBookAccess('member'), upload.single('cover'), async
     });
 
     if (book?.coverUrl) {
-      const oldPath = path.join(__dirname, '../..', book.coverUrl);
-      try {
-        await fs.unlink(oldPath);
-      } catch (err) {
-        console.warn(`删除旧封面失败: ${oldPath}`, err.message);
-      }
+      await unlinkStoredCover(book.coverUrl);
     }
 
     const updated = await prisma.book.update({
@@ -92,12 +113,7 @@ router.delete('/:bookId', checkBookAccess('member'), async (req, res, next) => {
     });
 
     if (book?.coverUrl) {
-      const filePath = path.join(__dirname, '../..', book.coverUrl);
-      try {
-        await fs.unlink(filePath);
-      } catch (err) {
-        console.warn(`删除封面文件失败: ${filePath}`, err.message);
-      }
+      await unlinkStoredCover(book.coverUrl);
     }
 
     const updated = await prisma.book.update({

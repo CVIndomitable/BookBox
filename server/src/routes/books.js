@@ -14,9 +14,9 @@ import { checkLibraryAccess, checkBookAccess } from '../middleware/auth.js';
 const router = Router();
 
 // 断言当前用户对目标 libraryId 至少是 member；供 batch / move 等多书操作内部使用
-async function assertMember(userId, libraryId, requiredRole = 'member') {
+async function assertMemberWithClient(client, userId, libraryId, requiredRole = 'member') {
   const rank = { owner: 3, admin: 2, member: 1 };
-  const m = await prisma.libraryMember.findUnique({
+  const m = await client.libraryMember.findUnique({
     where: { userId_libraryId: { userId, libraryId } },
   });
   if (!m) return { ok: false, status: 403, error: '无权访问此书库' };
@@ -24,6 +24,37 @@ async function assertMember(userId, libraryId, requiredRole = 'member') {
     return { ok: false, status: 403, error: `需要 ${requiredRole} 权限` };
   }
   return { ok: true };
+}
+
+async function assertMember(userId, libraryId, requiredRole = 'member') {
+  return assertMemberWithClient(prisma, userId, libraryId, requiredRole);
+}
+
+function throwHttp(statusCode, message) {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  throw err;
+}
+
+async function requireMemberWithClient(client, userId, libraryId, requiredRole = 'member') {
+  if (!libraryId) {
+    throwHttp(400, '目标位置未归属书库');
+  }
+  const membership = await assertMemberWithClient(client, userId, libraryId, requiredRole);
+  if (!membership.ok) {
+    throwHttp(membership.status, membership.error);
+  }
+}
+
+async function validateLocationInLibrary(client, locationType, locationId, libraryId) {
+  const containerLibraryId = await validateLocation(client, locationType, locationId);
+  if (!containerLibraryId) {
+    throwHttp(400, '目标位置未归属书库');
+  }
+  if (containerLibraryId !== libraryId) {
+    throwHttp(403, '目标位置不属于当前书库');
+  }
+  return containerLibraryId;
 }
 
 // 合法的地区模式
@@ -42,6 +73,10 @@ function parsePrice(raw) {
   const m = String(raw).replace(/[¥￥$,\s元RMB]/gi, '');
   const n = Number(m);
   return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function csvCell(value) {
+  return `"${String(value ?? '').replace(/"/g, '""')}"`;
 }
 
 // 获取书籍列表（支持分页、搜索、按分类/状态/位置筛选）
@@ -112,7 +147,7 @@ router.post('/', checkLibraryAccess('member'), async (req, res, next) => {
     const {
       title, author, isbn, publisher, publishDate, price, coverUrl,
       categoryId, verifyStatus, verifySource, rawOcrText,
-      locationType, locationId, libraryId,
+      locationType, locationId,
     } = req.body;
 
     if (!title) {
@@ -130,10 +165,8 @@ router.post('/', checkLibraryAccess('member'), async (req, res, next) => {
 
     const book = await prisma.$transaction(async (tx) => {
       // 事务内校验目标存在，防止校验后、写入前目标被并发删除
-      // 同时拿到目标容器的 libraryId，作为 book.libraryId 的默认来源
-      let containerLibraryId = null;
       if (finalLocationType !== 'none') {
-        containerLibraryId = await validateLocation(tx, finalLocationType, finalLocationId);
+        await validateLocationInLibrary(tx, finalLocationType, finalLocationId, req.libraryId);
       }
 
       const created = await tx.book.create({
@@ -151,7 +184,7 @@ router.post('/', checkLibraryAccess('member'), async (req, res, next) => {
           rawOcrText,
           locationType: finalLocationType,
           locationId: finalLocationId,
-          libraryId: parseOptionalId(libraryId) ?? containerLibraryId,
+          libraryId: req.libraryId,
         },
       });
 
@@ -339,13 +372,33 @@ router.get('/duplicates', async (req, res, next) => {
   }
 });
 
-// 回收站：列出软删书籍（必须指定 libraryId）
+// 回收站：列出软删书籍；未指定 libraryId 时仅列出当前用户参与书库中的条目
 // 必须声明在 /:id 之前，避免被通配路由捕获
 // 响应：{ data: [...books with locationInfo], retentionDays }
-router.get('/trash', checkLibraryAccess('member'), async (req, res, next) => {
+router.get('/trash', async (req, res, next) => {
   try {
+    const rawLibraryId = req.query.libraryId;
+    const libraryId = parseOptionalId(rawLibraryId);
+    let libraryFilter;
+
+    if (rawLibraryId !== undefined && rawLibraryId !== null && rawLibraryId !== '' && !libraryId) {
+      return res.status(400).json({ error: 'libraryId 非法' });
+    }
+
+    if (libraryId) {
+      const mm = await assertMember(req.user.id, libraryId, 'member');
+      if (!mm.ok) return res.status(mm.status).json({ error: mm.error });
+      libraryFilter = libraryId;
+    } else {
+      const memberships = await prisma.libraryMember.findMany({
+        where: { userId: req.user.id },
+        select: { libraryId: true },
+      });
+      libraryFilter = { in: memberships.map((m) => m.libraryId) };
+    }
+
     const books = await prisma.book.findMany({
-      where: { deletedAt: { not: null }, libraryId: req.libraryId },
+      where: { deletedAt: { not: null }, libraryId: libraryFilter },
       include: { category: true },
       orderBy: { deletedAt: 'desc' },
     });
@@ -388,7 +441,7 @@ router.post('/:id/restore', checkBookAccess('member'), async (req, res, next) =>
           if (e.statusCode === 404) {
             restoredLocationType = 'none';
             restoredLocationId = null;
-            restoredLibraryId = null;
+            restoredLibraryId = book.libraryId;
           } else {
             throw e;
           }
@@ -475,16 +528,24 @@ router.post('/batch', async (req, res, next) => {
       return res.status(400).json({ error: '请提供书籍列表' });
     }
 
-    // 判定最终 libraryId：优先 body.libraryId，其次从容器反查
+    // 兼容旧的 boxId 参数
+    const finalLocationType = locationType || (boxId ? 'box' : 'none');
+    validateLocationType(finalLocationType);
+    const finalLocationId = parseOptionalId(locationId) || parseOptionalId(boxId);
+    if (finalLocationType !== 'none' && !finalLocationId) {
+      return res.status(400).json({ error: '指定位置类型时必须提供位置 ID' });
+    }
+
+    // 判定最终 libraryId：无位置时必须由 body.libraryId 指定；有位置时必须与容器归属一致
     let targetLibraryId = parseOptionalId(libraryId);
     if (!targetLibraryId) {
-      const containerId = parseOptionalId(locationId) || parseOptionalId(boxId);
-      const containerType = locationType || (boxId ? 'box' : null);
-      if (containerType && containerId) {
-        const model = containerType === 'shelf' ? 'shelf' : containerType === 'box' ? 'box' : null;
+      if (finalLocationType !== 'none' && finalLocationId) {
+        const model = finalLocationType === 'shelf' ? 'shelf' : finalLocationType === 'box' ? 'box' : null;
         if (model) {
-          const row = await prisma[model].findUnique({ where: { id: containerId }, select: { libraryId: true } });
-          targetLibraryId = row?.libraryId ?? null;
+          const row = await prisma[model].findUnique({ where: { id: finalLocationId }, select: { libraryId: true } });
+          if (!row) return res.status(404).json({ error: '目标位置不存在' });
+          if (!row.libraryId) return res.status(400).json({ error: '目标位置未归属书库' });
+          targetLibraryId = row.libraryId;
         }
       }
     }
@@ -494,19 +555,12 @@ router.post('/batch', async (req, res, next) => {
     const mm = await assertMember(req.user.id, targetLibraryId, 'member');
     if (!mm.ok) return res.status(mm.status).json({ error: mm.error });
 
-    // 兼容旧的 boxId 参数
-    const finalLocationType = locationType || (boxId ? 'box' : 'none');
-    validateLocationType(finalLocationType);
-    const finalLocationId = parseOptionalId(locationId) || parseOptionalId(boxId);
-
     const skipped = [];
     const results = await prisma.$transaction(async (tx) => {
-      // 事务内校验目标存在，同时拿到容器 libraryId 兜底
-      let containerLibraryId = null;
+      // 事务内校验目标存在并属于最终书库，防止校验后、写入前目标被并发挪走
       if (finalLocationType !== 'none' && finalLocationId) {
-        containerLibraryId = await validateLocation(tx, finalLocationType, finalLocationId);
+        await validateLocationInLibrary(tx, finalLocationType, finalLocationId, targetLibraryId);
       }
-      const resolvedLibraryId = parseOptionalId(libraryId) ?? containerLibraryId;
 
       const created = [];
 
@@ -532,7 +586,7 @@ router.post('/batch', async (req, res, next) => {
             rawOcrText: bookData.rawOcrText,
             locationType: finalLocationType,
             locationId: finalLocationId,
-            libraryId: resolvedLibraryId,
+            libraryId: targetLibraryId,
           },
         });
 
@@ -564,6 +618,39 @@ router.post('/batch', async (req, res, next) => {
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     if (handleTxConflict(res, err)) return;
+    next(err);
+  }
+});
+
+// 导出书籍为 CSV（不含回收站；必须指定 libraryId）
+// 必须声明在 /:id 之前，避免被通配路由捕获
+router.get('/export', checkLibraryAccess('member'), async (req, res, next) => {
+  try {
+    const where = { deletedAt: null, libraryId: req.libraryId };
+
+    const booksList = await prisma.book.findMany({
+      where,
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const csv = [
+      '书名,作者,ISBN,出版社,出版时间,定价,位置类型,位置ID',
+      ...booksList.map((book) => [
+        book.title,
+        book.author,
+        book.isbn,
+        book.publisher,
+        book.publishDate,
+        book.price ?? '',
+        book.locationType,
+        book.locationId || '',
+      ].map(csvCell).join(','))
+    ].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="books-${Date.now()}.csv"`);
+    res.send('\uFEFF' + csv); // BOM for Excel
+  } catch (err) {
     next(err);
   }
 });
@@ -640,13 +727,14 @@ router.put('/:id', checkBookAccess('member'), async (req, res, next) => {
     const book = await prisma.$transaction(async (tx) => {
       // 事务内校验目标位置存在，并同步 libraryId：
       //   - 有目标容器：取容器的 libraryId
-      //   - 未归位（none）：libraryId 置 null
+      //   - 未归位（none）：保留原书库归属
       if (isMoving) {
         if (data.locationType !== 'none' && data.locationId) {
           const targetLibraryId = await validateLocation(tx, data.locationType, data.locationId);
-          data.libraryId = targetLibraryId ?? null;
+          await requireMemberWithClient(tx, req.user.id, targetLibraryId, 'member');
+          data.libraryId = targetLibraryId;
         } else {
-          data.libraryId = null;
+          data.libraryId = existingBook.libraryId;
         }
       }
 
@@ -787,13 +875,16 @@ router.post('/:id/move', checkBookAccess('member'), async (req, res, next) => {
       // 事务内校验目标存在，防止校验后、写入前目标被删
       // 同时拿到目标容器的 libraryId，用来同步 book.libraryId：
       //   - 有目标容器：同步到容器所在书库
-      //   - 未归位（none）：libraryId 置 null（没容器就没书库归属）
+      //   - 未归位（none）：保留原书库归属
       const targetLibraryId = await validateLocation(tx, toType, targetId);
+      if (toType !== 'none') {
+        await requireMemberWithClient(tx, req.user.id, targetLibraryId, 'member');
+      }
 
       const updateData = {
         locationType: toType,
         locationId: targetId,
-        libraryId: toType === 'none' ? null : (targetLibraryId ?? null),
+        libraryId: toType === 'none' ? book.libraryId : targetLibraryId,
       };
       await tx.book.update({
         where: { id },
@@ -880,8 +971,8 @@ router.post('/batch-import', checkLibraryAccess('member'), async (req, res, next
           publishDate: bookData.publishDate || null,
           price: parsePrice(bookData.price),
           libraryId: req.libraryId,
-          locationType: bookData.locationType || 'none',
-          locationId: bookData.locationId || null,
+          locationType: 'none',
+          locationId: null,
           verifyStatus: bookData.verifyStatus || 'manual'
         }
       });
@@ -890,31 +981,6 @@ router.post('/batch-import', checkLibraryAccess('member'), async (req, res, next
     }
 
     res.json({ count: created.length, books: created });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// 导出书籍为 CSV（不含回收站；必须指定 libraryId）
-router.get('/export', checkLibraryAccess('member'), async (req, res, next) => {
-  try {
-    const where = { deletedAt: null, libraryId: req.libraryId };
-
-    const booksList = await prisma.book.findMany({
-      where,
-      orderBy: { createdAt: 'desc' }
-    });
-
-    const csv = [
-      '书名,作者,ISBN,出版社,出版时间,定价,位置类型,位置ID',
-      ...booksList.map(book =>
-        `"${book.title}","${book.author || ''}","${book.isbn || ''}","${book.publisher || ''}","${book.publishDate || ''}","${book.price ?? ''}","${book.locationType}","${book.locationId || ''}"`
-      )
-    ].join('\n');
-
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="books-${Date.now()}.csv"`);
-    res.send('\uFEFF' + csv); // BOM for Excel
   } catch (err) {
     next(err);
   }

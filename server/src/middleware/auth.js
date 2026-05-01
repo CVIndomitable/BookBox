@@ -58,8 +58,8 @@ const ROLE_HIERARCHY = { owner: 3, admin: 2, member: 1 };
 export function checkLibraryAccess(requiredRole = 'member') {
   return async (req, res, next) => {
     try {
-      // libraryId 来源优先级：路径参数 > 查询参数 > body
-      const rawId = req.params.libraryId ?? req.query.libraryId ?? req.body?.libraryId;
+      // libraryId 来源优先级：路径参数 > 查询参数 > body；兼容 /libraries/:id 这类路由
+      const rawId = req.params.libraryId ?? req.params.id ?? req.query.libraryId ?? req.body?.libraryId;
       const libraryId = parseInt(rawId, 10);
       if (!Number.isInteger(libraryId) || libraryId <= 0) {
         return res.status(400).json({ error: '缺少书库 ID' });
@@ -111,6 +111,9 @@ export function checkContainerAccess(containerKind, requiredRole = 'member') {
       if (!row) {
         return res.status(404).json({ error: `${containerKind} 不存在` });
       }
+      if (!row.libraryId) {
+        return res.status(403).json({ error: `${containerKind} 未归属书库` });
+      }
       const membership = await prisma.libraryMember.findUnique({
         where: {
           userId_libraryId: { userId: req.user.id, libraryId: row.libraryId },
@@ -145,6 +148,9 @@ export function checkBookAccess(requiredRole = 'member') {
       });
       if (!book) {
         return res.status(404).json({ error: '书籍不存在' });
+      }
+      if (!book.libraryId) {
+        return res.status(403).json({ error: '书籍未归属书库' });
       }
       const membership = await prisma.libraryMember.findUnique({
         where: {
