@@ -42,6 +42,9 @@ if (!process.env.SUPPLIER_ENCRYPTION_KEY) {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// 信任 nginx 反向代理
+app.set('trust proxy', 1);
+
 // 基础中间件
 // CORS：默认只允许同源与 iOS 原生客户端（均无 Origin 头）；
 // 浏览器等跨域来源必须通过 CORS_ORIGIN 显式白名单启用（逗号分隔，* 表示放开）
