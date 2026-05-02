@@ -99,18 +99,23 @@ router.get('/', checkLibraryAccess('member'), async (req, res, next) => {
 
     // 回收站里的书不出现在任何正常列表中；强制按 libraryId 过滤避免跨库泄露
     // 不展示系统书库的书
+    // 注：用 AND 数组组合所有条件，避免 Prisma 在 NOT + OR 同层时可能产生的意外交互
     const systemLibraryId = await getSystemLibraryId();
-    const where = { deletedAt: null, libraryId: req.libraryId };
+    const conditions = [{ libraryId: req.libraryId }];
     if (systemLibraryId) {
-      where.NOT = { libraryId: systemLibraryId };
+      conditions.push({ libraryId: { not: systemLibraryId } });
     }
 
     if (search) {
-      where.OR = [
-        { title: { contains: search } },
-        { author: { contains: search } },
-      ];
+      conditions.push({
+        OR: [
+          { title: { contains: search } },
+          { author: { contains: search } },
+        ],
+      });
     }
+
+    const where = { deletedAt: null, AND: conditions };
 
     if (categoryId) {
       where.categoryId = parseId(categoryId, '分类 ID');
@@ -162,9 +167,13 @@ router.get('/', checkLibraryAccess('member'), async (req, res, next) => {
 router.post('/', checkLibraryAccess('member'), async (req, res, next) => {
   try {
     const {
-      title, author, isbn, publisher, publishDate, price, coverUrl,
+      title, author, isbn, publisher, edition, price, coverUrl,
       categoryId, verifyStatus, verifySource, rawOcrText,
       locationType, locationId, cacheSourceBookId,
+      adaptation, translator, authorNationality, publisherPerson,
+      responsibleEditor, responsiblePrinting, coverDesign,
+      phone, address, postalCode, printingHouse,
+      impression, format, printedSheets, wordCount,
     } = req.body;
 
     if (!title) {
@@ -192,7 +201,7 @@ router.post('/', checkLibraryAccess('member'), async (req, res, next) => {
           author,
           isbn,
           publisher,
-          publishDate: publishDate || null,
+          edition: edition || null,
           price: parsePrice(price),
           coverUrl,
           categoryId: parseOptionalId(categoryId),
@@ -203,6 +212,21 @@ router.post('/', checkLibraryAccess('member'), async (req, res, next) => {
           locationId: finalLocationId,
           libraryId: req.libraryId,
           cacheSourceBookId: parseOptionalId(cacheSourceBookId),
+          adaptation: adaptation || null,
+          translator: translator || null,
+          authorNationality: authorNationality || null,
+          publisherPerson: publisherPerson || null,
+          responsibleEditor: responsibleEditor || null,
+          responsiblePrinting: responsiblePrinting || null,
+          coverDesign: coverDesign || null,
+          phone: phone || null,
+          address: address || null,
+          postalCode: postalCode || null,
+          printingHouse: printingHouse || null,
+          impression: impression || null,
+          format: format || null,
+          printedSheets: printedSheets || null,
+          wordCount: wordCount || null,
         },
       });
 
@@ -604,7 +628,7 @@ router.post('/batch', async (req, res, next) => {
             author: bookData.author,
             isbn: bookData.isbn,
             publisher: bookData.publisher,
-            publishDate: bookData.publishDate || null,
+            edition: bookData.edition || bookData.publishDate || null,
             price: parsePrice(bookData.price),
             coverUrl: bookData.coverUrl,
             categoryId: parseOptionalId(bookData.categoryId),
@@ -614,6 +638,21 @@ router.post('/batch', async (req, res, next) => {
             locationType: finalLocationType,
             locationId: finalLocationId,
             libraryId: targetLibraryId,
+            adaptation: bookData.adaptation || null,
+            translator: bookData.translator || null,
+            authorNationality: bookData.authorNationality || null,
+            publisherPerson: bookData.publisherPerson || null,
+            responsibleEditor: bookData.responsibleEditor || null,
+            responsiblePrinting: bookData.responsiblePrinting || null,
+            coverDesign: bookData.coverDesign || null,
+            phone: bookData.phone || null,
+            address: bookData.address || null,
+            postalCode: bookData.postalCode || null,
+            printingHouse: bookData.printingHouse || null,
+            impression: bookData.impression || null,
+            format: bookData.format || null,
+            printedSheets: bookData.printedSheets || null,
+            wordCount: bookData.wordCount || null,
           },
         });
 
@@ -662,13 +701,28 @@ router.get('/export', checkLibraryAccess('member'), async (req, res, next) => {
     });
 
     const csv = [
-      '书名,作者,ISBN,出版社,出版时间,定价,位置类型,位置ID',
+      '书名,作者,改编,译者,作者国籍,ISBN,出版社,版次,出版人,责任编辑,责任印制,封面设计,电话,地址,邮编,印刷,印次,开本,印张,字数,定价,位置类型,位置ID',
       ...booksList.map((book) => [
         book.title,
         book.author,
+        book.adaptation,
+        book.translator,
+        book.authorNationality,
         book.isbn,
         book.publisher,
-        book.publishDate,
+        book.edition,
+        book.publisherPerson,
+        book.responsibleEditor,
+        book.responsiblePrinting,
+        book.coverDesign,
+        book.phone,
+        book.address,
+        book.postalCode,
+        book.printingHouse,
+        book.impression,
+        book.format,
+        book.printedSheets,
+        book.wordCount,
         book.price ?? '',
         book.locationType,
         book.locationId || '',
@@ -948,9 +1002,13 @@ router.put('/:id', checkBookAccess('member'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书籍 ID');
     const {
-      title, author, isbn, publisher, publishDate, price, coverUrl,
+      title, author, isbn, publisher, edition, price, coverUrl,
       categoryId, verifyStatus, verifySource,
       locationType, locationId,
+      adaptation, translator, authorNationality, publisherPerson,
+      responsibleEditor, responsiblePrinting, coverDesign,
+      phone, address, postalCode, printingHouse,
+      impression, format, printedSheets, wordCount,
     } = req.body;
 
     const existingBook = await prisma.book.findFirst({ where: { id, deletedAt: null } });
@@ -963,13 +1021,28 @@ router.put('/:id', checkBookAccess('member'), async (req, res, next) => {
     if (author !== undefined) data.author = author;
     if (isbn !== undefined) data.isbn = isbn;
     if (publisher !== undefined) data.publisher = publisher;
-    if (publishDate !== undefined) data.publishDate = publishDate || null;
+    if (edition !== undefined) data.edition = edition || null;
     if (price !== undefined) data.price = parsePrice(price);
     if (coverUrl !== undefined) data.coverUrl = coverUrl;
     if (categoryId !== undefined)
       data.categoryId = categoryId ? parseId(categoryId, '分类 ID') : null;
     if (verifyStatus !== undefined) data.verifyStatus = verifyStatus;
     if (verifySource !== undefined) data.verifySource = verifySource;
+    if (adaptation !== undefined) data.adaptation = adaptation || null;
+    if (translator !== undefined) data.translator = translator || null;
+    if (authorNationality !== undefined) data.authorNationality = authorNationality || null;
+    if (publisherPerson !== undefined) data.publisherPerson = publisherPerson || null;
+    if (responsibleEditor !== undefined) data.responsibleEditor = responsibleEditor || null;
+    if (responsiblePrinting !== undefined) data.responsiblePrinting = responsiblePrinting || null;
+    if (coverDesign !== undefined) data.coverDesign = coverDesign || null;
+    if (phone !== undefined) data.phone = phone || null;
+    if (address !== undefined) data.address = address || null;
+    if (postalCode !== undefined) data.postalCode = postalCode || null;
+    if (printingHouse !== undefined) data.printingHouse = printingHouse || null;
+    if (impression !== undefined) data.impression = impression || null;
+    if (format !== undefined) data.format = format || null;
+    if (printedSheets !== undefined) data.printedSheets = printedSheets || null;
+    if (wordCount !== undefined) data.wordCount = wordCount || null;
 
     // 如果更新了位置，执行移动逻辑
     const isMoving = locationType !== undefined;
@@ -1285,12 +1358,27 @@ router.post('/batch-import', checkLibraryAccess('member'), async (req, res, next
             author: bookData.author || null,
             isbn: bookData.isbn || null,
             publisher: bookData.publisher || null,
-            publishDate: bookData.publishDate || null,
+            edition: bookData.edition || bookData.publishDate || null,
             price: parsePrice(bookData.price),
             libraryId: req.libraryId,
             locationType: finalLocationType,
             locationId: finalLocationId,
-            verifyStatus: bookData.verifyStatus || 'manual'
+            verifyStatus: bookData.verifyStatus || 'manual',
+            adaptation: bookData.adaptation || null,
+            translator: bookData.translator || null,
+            authorNationality: bookData.authorNationality || null,
+            publisherPerson: bookData.publisherPerson || null,
+            responsibleEditor: bookData.responsibleEditor || null,
+            responsiblePrinting: bookData.responsiblePrinting || null,
+            coverDesign: bookData.coverDesign || null,
+            phone: bookData.phone || null,
+            address: bookData.address || null,
+            postalCode: bookData.postalCode || null,
+            printingHouse: bookData.printingHouse || null,
+            impression: bookData.impression || null,
+            format: bookData.format || null,
+            printedSheets: bookData.printedSheets || null,
+            wordCount: bookData.wordCount || null,
           }
         });
 
