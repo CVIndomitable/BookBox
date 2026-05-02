@@ -20,7 +20,7 @@ struct PreClassifyView: View {
     @State private var showCamera = false
     @State private var showPhotoPicker = false
     @State private var recognizedBooks: [RecognizedBook] = []
-    @State private var isProcessing = false
+    @State private var recognitionTasks: [RecognitionTask] = []
     @State private var errorMessage: String?
 
     // 分类筛选
@@ -58,10 +58,15 @@ struct PreClassifyView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if recognizedBooks.isEmpty && !isProcessing {
+            if !recognitionTasks.isEmpty {
+                recognitionQueueStrip
+                Divider()
+            }
+
+            if recognizedBooks.isEmpty && recognitionTasks.isEmpty {
                 emptyStateView
-            } else if recognizedBooks.isEmpty && isProcessing {
-                firstTimeProcessingView
+            } else if recognizedBooks.isEmpty {
+                recognizingPlaceholder
             } else {
                 if !allCategories.isEmpty {
                     categoryFilterBar
@@ -71,13 +76,19 @@ struct PreClassifyView: View {
         }
         .navigationTitle("预分类")
         .toolbar { toolbarContent }
-        .sheet(isPresented: $showCamera, onDismiss: handleCapturedImage) {
+        .sheet(isPresented: $showCamera) {
             CameraView(capturedImage: $capturedImage)
                 .ignoresSafeArea()
         }
-        .sheet(isPresented: $showPhotoPicker, onDismiss: handleCapturedImage) {
+        .sheet(isPresented: $showPhotoPicker) {
             PhotoPickerView(selectedImage: $capturedImage)
                 .ignoresSafeArea()
+        }
+        .onChange(of: capturedImage) { _, newImage in
+            if let image = newImage {
+                enqueueRecognition(image)
+                capturedImage = nil
+            }
         }
         .sheet(isPresented: $showSessionList) {
             SessionListView(
@@ -191,15 +202,83 @@ struct PreClassifyView: View {
         }
     }
 
-    // MARK: - 首次识别加载
+    // MARK: - 识别队列（顶部横向缩略图）
 
-    private var firstTimeProcessingView: some View {
-        VStack(spacing: 16) {
-            ProgressView()
-                .scaleEffect(1.5)
-            Text("AI 正在识别书籍...")
-                .foregroundStyle(.secondary)
+    private var recognitionQueueStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(recognitionTasks) { task in
+                    recognitionThumbnail(task)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
         }
+        .background(.thinMaterial)
+    }
+
+    @ViewBuilder
+    private func recognitionThumbnail(_ task: RecognitionTask) -> some View {
+        ZStack {
+            Image(uiImage: task.thumbnail)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 64, height: 64)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            switch task.status {
+            case .recognizing:
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.black.opacity(0.35))
+                    .frame(width: 64, height: 64)
+                ProgressView()
+                    .tint(.white)
+            case .done(let count):
+                VStack {
+                    Spacer()
+                    Text("\(count) 本")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.green.opacity(0.9))
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
+                        .padding(4)
+                }
+                .frame(width: 64, height: 64)
+            case .failed:
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.red.opacity(0.35))
+                    .frame(width: 64, height: 64)
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.white)
+                    .font(.title3)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if task.status != .recognizing {
+                Button {
+                    recognitionTasks.removeAll { $0.id == task.id }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.white, .black.opacity(0.6))
+                }
+                .offset(x: 6, y: -6)
+            }
+        }
+    }
+
+    /// 队列中有任务但还没有结果时显示的占位
+    private var recognizingPlaceholder: some View {
+        VStack(spacing: 8) {
+            Spacer()
+            Text("正在识别中，可继续拍照")
+                .foregroundStyle(.secondary)
+                .font(.subheadline)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - 分类筛选栏
@@ -232,7 +311,6 @@ struct PreClassifyView: View {
         List {
             sessionInfoSection
             booksSection
-            processingSection
         }
         .listStyle(.insetGrouped)
     }
@@ -270,49 +348,32 @@ struct PreClassifyView: View {
         }
     }
 
-    @ViewBuilder
-    private var processingSection: some View {
-        if isProcessing {
-            Section {
-                HStack(spacing: 12) {
-                    ProgressView()
-                    Text("正在识别新拍摄的书籍...")
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 4)
+    // MARK: - 识别队列
+
+    /// 拍完一张就入队，后台并发识别，完成后追加到书籍列表
+    private func enqueueRecognition(_ image: UIImage) {
+        let thumb = image.preparingThumbnail(of: CGSize(width: 160, height: 160)) ?? image
+        let task = RecognitionTask(thumbnail: thumb, status: .recognizing)
+        recognitionTasks.append(task)
+        let taskId = task.id
+
+        Task { @MainActor in
+            guard let compressed = compressImageForRecognition(image) else {
+                updateTask(taskId, status: .failed)
+                errorMessage = "图片压缩失败，请重试"
+                return
             }
-        }
-    }
-
-    // MARK: - 辅助方法
-
-    /// 拍照/相册 sheet 关闭后处理图片
-    private func handleCapturedImage() {
-        guard let image = capturedImage else { return }
-        capturedImage = nil
-        processImage(image)
-    }
-
-    private func processImage(_ image: UIImage) {
-        isProcessing = true
-        Task {
-            defer { isProcessing = false }
             do {
-                // 图片压缩放到后台线程避免阻塞 UI
-                guard let compressed = await Task.detached(priority: .userInitiated, operation: {
-                    compressImageForRecognition(image)
-                }).value else {
-                    errorMessage = "图片压缩失败，请重试"
-                    return
+                let books = try await RecognitionThrottle.shared.run {
+                    try await NetworkService.shared.recognizeBooks(imageData: compressed)
                 }
-                let books = try await NetworkService.shared.recognizeBooks(imageData: compressed)
                 if books.isEmpty {
+                    updateTask(taskId, status: .failed)
                     errorMessage = "未识别到书籍，请调整角度或距离后重试"
                 } else {
-                    // 回到主线程更新状态后再保存，确保顺序一致
                     recognizedBooks.append(contentsOf: books)
                     autoSaveCurrentSession()
-                    // 保存扫描记录（不阻塞主流程）
+                    updateTask(taskId, status: .done(books.count))
                     Task.detached {
                         try? await NetworkService.shared.saveScanRecord(
                             mode: .preclassify,
@@ -321,9 +382,15 @@ struct PreClassifyView: View {
                     }
                 }
             } catch {
+                updateTask(taskId, status: .failed)
                 errorMessage = "AI 识别失败: \(error.chineseDescription)"
             }
         }
+    }
+
+    private func updateTask(_ id: UUID, status: RecognitionTask.Status) {
+        guard let idx = recognitionTasks.firstIndex(where: { $0.id == id }) else { return }
+        recognitionTasks[idx].status = status
     }
 
     private func deleteBooks(at offsets: IndexSet) {
@@ -387,7 +454,6 @@ struct PreClassifyView: View {
         recognizedBooks = session.books
         currentSessionId = session.id
         selectedCategory = nil
-        isProcessing = false
     }
 
     private func deleteSessions(at offsets: IndexSet) {

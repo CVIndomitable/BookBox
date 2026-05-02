@@ -7,6 +7,7 @@ struct LibraryOverview: Codable {
     let rooms: [RoomSummary]?
     let shelves: [ShelfSummary]
     let boxes: [BoxSummary]
+    let myRole: String?
 }
 
 /// 书架摘要（用于总览）

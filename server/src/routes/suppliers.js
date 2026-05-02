@@ -6,6 +6,28 @@ import { encrypt, decrypt, isEncrypted, isEncryptionConfigured } from '../utils/
 
 const router = Router();
 
+function envList(...names) {
+  return new Set(
+    names
+      .flatMap((name) => (process.env[name] || '').split(','))
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+}
+
+function isSupplierAdmin(user) {
+  const adminIds = envList('SUPPLIER_ADMIN_USER_IDS', 'ADMIN_USER_IDS');
+  const adminUsernames = envList('SUPPLIER_ADMIN_USERNAMES', 'ADMIN_USERNAMES');
+  return adminIds.has(String(user?.id)) || adminUsernames.has(user?.username);
+}
+
+function requireSupplierAdmin(req, res, next) {
+  if (!isSupplierAdmin(req.user)) {
+    return res.status(403).json({ error: '需要供应商管理权限' });
+  }
+  next();
+}
+
 // 打码 API Key，仅保留前 4 位 + 后 4 位
 function maskKey(key) {
   if (!key) return null;
@@ -67,7 +89,7 @@ router.get('/', async (req, res, next) => {
 });
 
 // POST /api/suppliers — 新建（运维用）
-router.post('/', async (req, res, next) => {
+router.post('/', requireSupplierAdmin, async (req, res, next) => {
   try {
     const {
       name, protocol = 'anthropic', endpoint, apiKey,
@@ -102,7 +124,7 @@ router.post('/', async (req, res, next) => {
 });
 
 // PUT /api/suppliers/:id — 更新（运维用）
-router.put('/:id', async (req, res, next) => {
+router.put('/:id', requireSupplierAdmin, async (req, res, next) => {
   try {
     const id = parseId(req.params.id);
     const body = req.body || {};
@@ -133,7 +155,7 @@ router.put('/:id', async (req, res, next) => {
 });
 
 // DELETE /api/suppliers/:id — 删除
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', requireSupplierAdmin, async (req, res, next) => {
   try {
     const id = parseId(req.params.id);
     await prisma.llmSupplier.delete({ where: { id } });
@@ -144,7 +166,7 @@ router.delete('/:id', async (req, res, next) => {
 });
 
 // POST /api/suppliers/:id/ping — 测试单个供应商连通性
-router.post('/:id/ping', async (req, res, next) => {
+router.post('/:id/ping', requireSupplierAdmin, async (req, res, next) => {
   try {
     const id = parseId(req.params.id);
     const sup = await prisma.llmSupplier.findUnique({ where: { id } });

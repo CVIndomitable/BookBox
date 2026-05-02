@@ -1,0 +1,164 @@
+.sun-reminders {
+  min-height: 100vh;
+  background: #f5f5f5;
+}
+
+.reminders-header {
+  background: white;
+  padding: 40px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  text-align: center;
+}
+
+.reminders-header h1 {
+  font-size: 32px;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.reminders-header .subtitle {
+  color: #666;
+  font-size: 16px;
+}
+
+.reminders-content {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 40px 20px;
+}
+
+.settings-card {
+  background: white;
+  padding: 24px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  margin-bottom: 32px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.settings-card h2 {
+  font-size: 18px;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.settings-card p {
+  color: #666;
+  font-size: 14px;
+}
+
+.reminders-list h2 {
+  font-size: 20px;
+  color: #333;
+  margin-bottom: 20px;
+}
+
+.reminder-items {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.reminder-item {
+  background: white;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-left: 4px solid #4caf50;
+}
+
+.reminder-item.urgent {
+  border-left-color: #ff9800;
+}
+
+.reminder-item.overdue {
+  border-left-color: #f44336;
+}
+
+.reminder-info h3 {
+  font-size: 18px;
+  color: #333;
+  margin-bottom: 4px;
+}
+
+.reminder-info .target-type {
+  font-size: 12px;
+  color: #999;
+  margin-bottom: 8px;
+}
+
+.reminder-info .next-sun {
+  font-size: 14px;
+  color: #666;
+  margin-bottom: 4px;
+}
+
+.reminder-info .overdue-text {
+  color: #f44336;
+  font-weight: 600;
+}
+
+.reminder-info .urgent-text {
+  color: #ff9800;
+  font-weight: 600;
+}
+
+.reminder-info .last-sun {
+  font-size: 12px;
+  color: #999;
+}
+
+.reminder-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-primary-small {
+  background: #667eea;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+
+.btn-primary-small:hover {
+  background: #5568d3;
+}
+
+@media (max-width: 768px) {
+  .reminders-header {
+    padding: 30px 20px;
+  }
+
+  .reminders-header h1 {
+    font-size: 24px;
+  }
+
+  .settings-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+  }
+
+  .reminder-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+  }
+
+  .reminder-actions {
+    width: 100%;
+  }
+
+  .reminder-actions button {
+    flex: 1;
+  }
+}

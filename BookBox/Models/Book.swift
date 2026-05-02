@@ -41,7 +41,20 @@ struct Book: Identifiable, Codable, Hashable {
     var author: String?
     var isbn: String?
     var publisher: String?
+    var publishDate: String?
+    // 定价：Prisma Decimal 序列化后是字符串（如 "29.80"），直接按 String 解码避免精度问题
+    var price: String?
     var coverUrl: String?
+    /// 构造可展示的封面 URL（绝对 URL 直接使用，相对路径拼接服务器地址）
+    var coverDisplayUrl: URL? {
+        guard let url = coverUrl else { return nil }
+        if url.hasPrefix("http://") || url.hasPrefix("https://") {
+            return URL(string: url)
+        }
+        let base = AppConfig.current
+        let root = base.hasSuffix("/api") ? String(base.dropLast(4)) : base
+        return URL(string: root + url)
+    }
     var categoryId: Int?
     var verifyStatus: VerifyStatus?
     var verifySource: String?
@@ -51,6 +64,8 @@ struct Book: Identifiable, Codable, Hashable {
     var libraryId: Int?
     var createdAt: Date?
     var updatedAt: Date?
+    /// 回收站时间；null 表示未被删（仅 /books/trash 响应会带值）
+    var deletedAt: Date?
 
     /// 位置描述文字
     var locationDescription: String {
@@ -86,11 +101,32 @@ struct NewBookRequest: Codable {
     var author: String?
     var isbn: String?
     var publisher: String?
+    var publishDate: String?
+    // 发给服务器时也用字符串，服务端会解析 "29.8"/"¥29.8"/"29.80元" 等形式
+    var price: String?
     var coverUrl: String?
     var categoryId: Int?
     var verifyStatus: VerifyStatus?
     var verifySource: String?
     var rawOcrText: String?
+}
+
+/// 从照片提取书籍详情的响应
+struct ExtractBookDetailsResponse: Codable {
+    let extracted: ExtractedBookDetails
+    let match: Book?
+    let matchReason: String?
+    let candidates: [Book]
+}
+
+/// AI 从照片里读出的字段（任意一项可能为 nil）
+struct ExtractedBookDetails: Codable {
+    var title: String?
+    var author: String?
+    var isbn: String?
+    var publisher: String?
+    var publishDate: String?
+    var price: Double?
 }
 
 /// 移动书籍请求
@@ -139,4 +175,10 @@ struct DuplicateLibraryResponse: Codable {
     let groups: [DuplicateGroup]
     let totalGroups: Int
     let totalDuplicateBooks: Int
+}
+
+/// 回收站响应：软删的书 + 保留天数（服务端固定，iOS 用于提示）
+struct TrashResponse: Codable {
+    let data: [Book]
+    let retentionDays: Int
 }

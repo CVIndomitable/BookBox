@@ -6,7 +6,7 @@ import prisma from './utils/prisma.js';
 import { authMiddleware } from './middleware/auth.js';
 import { idempotencyMiddleware } from './middleware/idempotency.js';
 import boxesRouter from './routes/boxes.js';
-import booksRouter from './routes/books.js';
+import booksRouter, { startTrashPurgeScheduler } from './routes/books.js';
 import categoriesRouter from './routes/categories.js';
 import scansRouter from './routes/scans.js';
 import settingsRouter from './routes/settings.js';
@@ -17,15 +17,22 @@ import libraryRouter from './routes/library.js';
 import librariesRouter from './routes/libraries.js';
 import llmRouter from './routes/llm.js';
 import suppliersRouter from './routes/suppliers.js';
+import authRouter from './routes/auth.js';
+import libraryMembersRouter from './routes/library-members.js';
+import sunRemindersRouter from './routes/sun-reminders.js';
+import coversRouter from './routes/covers.js';
 import { pingSupplier } from './utils/llmPool.js';
+import { initAPNs, startSunReminderScheduler } from './services/push-notification.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // 启动时检查关键环境变量
 if (!process.env.DATABASE_URL) {
   console.error('❌ 致命错误：DATABASE_URL 未配置');
   process.exit(1);
-}
-if (!process.env.API_TOKEN) {
-  console.warn('⚠ 警告：API_TOKEN 未配置，所有认证请求将被拒绝');
 }
 if (!process.env.SUPPLIER_ENCRYPTION_KEY) {
   console.warn('⚠ 警告：SUPPLIER_ENCRYPTION_KEY 未配置，供应商 API Key 将无法加密/解密');
@@ -56,9 +63,10 @@ app.use(cors({
 // - /api/books:         2MB（批量新增与含 rawOcrText 的写入可能偏大）
 // - 其它所有 /api/*:    1MB（结构化 JSON 够用）
 // 审计：剩余路由（rooms/shelves/boxes/categories/libraries/logs/scans/settings/suppliers
-// /llm/voice-command/llm/find-book/auth）均为小 JSON，无需单设上限。
+// /llm/voice-command/llm/find-book/auth/library-members/sun-reminders）均为小 JSON，无需单设上限。
 app.use('/api/llm/recognize', express.json({ limit: '10mb' }));
 app.use('/api/llm/recognize-compare', express.json({ limit: '10mb' }));
+app.use('/api/llm/extract-book-details', express.json({ limit: '10mb' }));
 app.use('/api/books', express.json({ limit: '2mb' }));
 app.use(express.json({ limit: '1mb' }));
 
@@ -82,12 +90,18 @@ const llmLimiter = rateLimit({
 });
 app.use('/api/llm', llmLimiter);
 
+// 静态文件服务（封面图片）
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
 // 健康检查（无需认证）
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// 认证中间件
+// 认证相关路由（无需旧的 authMiddleware）
+app.use('/api/auth', authRouter);
+
+// 认证中间件（旧的 API Token 方式，保持向后兼容）
 app.use('/api', authMiddleware);
 
 // 请求去重（基于 X-Request-Id，仅拦截 POST/PUT/DELETE）
@@ -171,6 +185,9 @@ app.use('/api/library', libraryRouter);
 app.use('/api/libraries', librariesRouter);
 app.use('/api/llm', llmRouter);
 app.use('/api/suppliers', suppliersRouter);
+app.use('/api/library-members', libraryMembersRouter);
+app.use('/api/sun-reminders', sunRemindersRouter);
+app.use('/api/covers', coversRouter);
 
 // 全局错误处理
 app.use((err, req, res, next) => {
@@ -196,6 +213,12 @@ app.use((err, req, res, next) => {
 
 const server = app.listen(PORT, () => {
   console.log(`BookBox 服务器已启动，端口: ${PORT}`);
+
+  // 初始化 APNs 和晒书提醒定时任务
+  initAPNs();
+  startSunReminderScheduler();
+  // 回收站定时清理（启动时跑一次 + 每 24 小时一次）
+  startTrashPurgeScheduler();
 });
 
 // 优雅关闭：断开数据库连接

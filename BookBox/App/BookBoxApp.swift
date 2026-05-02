@@ -2,12 +2,21 @@ import SwiftUI
 
 @main
 struct BookBoxApp: App {
+    @StateObject private var auth = AuthService.shared
+
     var body: some Scene {
         WindowGroup {
-            HomeView()
-                .overlay(alignment: .top) {
-                    SupplierDegradationBanner()
+            Group {
+                if auth.isLoggedIn {
+                    HomeView()
+                        .overlay(alignment: .top) {
+                            SupplierDegradationBanner()
+                        }
+                        .withVoiceAssistant()
+                } else {
+                    LoginView()
                 }
+            }
         }
     }
 }

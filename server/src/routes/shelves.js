@@ -1,24 +1,46 @@
 import { Router } from 'express';
 import prisma from '../utils/prisma.js';
 import { parseId, parsePagination, paginationResponse, resolveContainerPlacement } from '../utils/validate.js';
+import { authenticate, checkLibraryAccess, checkContainerAccess } from '../middleware/auth.js';
 
 const router = Router();
 
 // 更新书架的 book_count（统一用 COUNT 重算）
 async function updateShelfCount(tx, shelfId) {
   const count = await tx.book.count({
-    where: { locationType: 'shelf', locationId: shelfId },
+    where: { locationType: 'shelf', locationId: shelfId, deletedAt: null },
   });
   await tx.shelf.update({ where: { id: shelfId }, data: { bookCount: count } });
 }
 
-// 获取所有书架列表（支持按书库/房间筛选）
-router.get('/', async (req, res, next) => {
+// 获取书架列表（可选 libraryId：传了则返回该书库的书架，不传则返回用户所有书库的书架）
+router.get('/', authenticate, async (req, res, next) => {
   try {
     const where = {};
+
+    // 如果指定了 libraryId，校验权限并过滤
     if (req.query.libraryId) {
-      where.libraryId = parseId(req.query.libraryId, '书库 ID');
+      const libraryId = parseId(req.query.libraryId, '书库 ID');
+      const membership = await prisma.libraryMember.findUnique({
+        where: { userId_libraryId: { userId: req.user.id, libraryId } },
+      });
+      if (!membership) {
+        return res.status(403).json({ error: '无权访问此书库' });
+      }
+      where.libraryId = libraryId;
+    } else {
+      // 不传 libraryId：返回用户所有书库的书架
+      const memberships = await prisma.libraryMember.findMany({
+        where: { userId: req.user.id },
+        select: { libraryId: true },
+      });
+      const libraryIds = memberships.map(m => m.libraryId);
+      if (libraryIds.length === 0) {
+        return res.json([]);
+      }
+      where.libraryId = { in: libraryIds };
     }
+
     if (req.query.roomId) {
       where.roomId = parseId(req.query.roomId, '房间 ID');
     }
@@ -34,8 +56,8 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-// 新建书架（libraryId 与 roomId 保持一致；只传 libraryId 时自动选默认房间）
-router.post('/', async (req, res, next) => {
+// 新建书架（必须是该书库 admin 或以上）
+router.post('/', checkLibraryAccess('admin'), async (req, res, next) => {
   try {
     const { name, location, description, libraryId, roomId } = req.body;
 
@@ -44,6 +66,9 @@ router.post('/', async (req, res, next) => {
     }
 
     const placement = await resolveContainerPlacement(prisma, { libraryId, roomId });
+    if (placement.libraryId !== req.libraryId) {
+      return res.status(403).json({ error: '无权在目标书库创建书架' });
+    }
 
     const shelf = await prisma.shelf.create({
       data: { name, location, description, ...placement },
@@ -57,7 +82,7 @@ router.post('/', async (req, res, next) => {
 });
 
 // 获取书架详情及其中的书（分页）
-router.get('/:id', async (req, res, next) => {
+router.get('/:id', checkContainerAccess('shelf', 'member'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书架 ID');
     const { page, pageSize, skip, take } = parsePagination(req.query);
@@ -70,14 +95,14 @@ router.get('/:id', async (req, res, next) => {
 
     const [books, total] = await Promise.all([
       prisma.book.findMany({
-        where: { locationType: 'shelf', locationId: id },
+        where: { locationType: 'shelf', locationId: id, deletedAt: null },
         include: { category: true },
         skip,
         take,
         orderBy: { createdAt: 'desc' },
       }),
       prisma.book.count({
-        where: { locationType: 'shelf', locationId: id },
+        where: { locationType: 'shelf', locationId: id, deletedAt: null },
       }),
     ]);
 
@@ -93,7 +118,7 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // 更新书架信息（支持搬动：roomId 或 libraryId 任一传入都会重新计算归属）
-router.put('/:id', async (req, res, next) => {
+router.put('/:id', checkContainerAccess('shelf', 'admin'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书架 ID');
     const { name, location, description, libraryId, roomId } = req.body;
@@ -108,6 +133,15 @@ router.put('/:id', async (req, res, next) => {
     const hasLib = Object.prototype.hasOwnProperty.call(req.body, 'libraryId');
     if (hasRoom || hasLib) {
       const placement = await resolveContainerPlacement(prisma, { libraryId, roomId });
+      // 若要搬到另一个书库，要求用户对目标书库也是 admin
+      if (placement.libraryId && placement.libraryId !== req.libraryId) {
+        const targetMembership = await prisma.libraryMember.findUnique({
+          where: { userId_libraryId: { userId: req.user.id, libraryId: placement.libraryId } },
+        });
+        if (!targetMembership || (targetMembership.role !== 'owner' && targetMembership.role !== 'admin')) {
+          return res.status(403).json({ error: '无权搬动到目标书库' });
+        }
+      }
       data.libraryId = placement.libraryId;
       data.roomId = placement.roomId;
     }
@@ -125,7 +159,7 @@ router.put('/:id', async (req, res, next) => {
 });
 
 // 删除书架（书的 location 重置为 none，并记录日志）
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', checkContainerAccess('shelf', 'admin'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书架 ID');
 
@@ -176,7 +210,7 @@ router.delete('/:id', async (req, res, next) => {
 });
 
 // 批量将书放入书架
-router.post('/:id/books', async (req, res, next) => {
+router.post('/:id/books', checkContainerAccess('shelf', 'member'), async (req, res, next) => {
   try {
     const shelfId = parseId(req.params.id, '书架 ID');
     const { bookIds } = req.body;
@@ -184,6 +218,7 @@ router.post('/:id/books', async (req, res, next) => {
     if (!Array.isArray(bookIds) || bookIds.length === 0) {
       return res.status(400).json({ error: '请提供书籍 ID 列表' });
     }
+    const uniqueBookIds = [...new Set(bookIds.map((v) => parseId(v, '书籍 ID')))];
 
     const shelf = await prisma.shelf.findUnique({ where: { id: shelfId } });
     if (!shelf) {
@@ -192,8 +227,11 @@ router.post('/:id/books', async (req, res, next) => {
 
     // 获取这些书的当前位置，用于记录日志
     const books = await prisma.book.findMany({
-      where: { id: { in: bookIds } },
+      where: { id: { in: uniqueBookIds }, deletedAt: null, libraryId: req.libraryId },
     });
+    if (books.length !== uniqueBookIds.length) {
+      return res.status(403).json({ error: '部分书籍不存在或无权访问' });
+    }
 
     await prisma.$transaction(async (tx) => {
       // 收集需要更新 book_count 的旧容器
@@ -208,7 +246,7 @@ router.post('/:id/books', async (req, res, next) => {
       const updateData = { locationType: 'shelf', locationId: shelfId };
       if (shelf.libraryId) updateData.libraryId = shelf.libraryId;
       await tx.book.updateMany({
-        where: { id: { in: bookIds } },
+        where: { id: { in: uniqueBookIds }, deletedAt: null, libraryId: req.libraryId },
         data: updateData,
       });
 
@@ -217,7 +255,7 @@ router.post('/:id/books', async (req, res, next) => {
         const [type, idStr] = key.split(':');
         const containerId = parseInt(idStr, 10);
         const count = await tx.book.count({
-          where: { locationType: type, locationId: containerId },
+          where: { locationType: type, locationId: containerId, deletedAt: null },
         });
         if (type === 'shelf') {
           await tx.shelf.update({ where: { id: containerId }, data: { bookCount: count } });
@@ -243,7 +281,7 @@ router.post('/:id/books', async (req, res, next) => {
       });
     }, { isolationLevel: 'Serializable' });
 
-    res.json({ message: `已将 ${bookIds.length} 本书放入书架` });
+    res.json({ message: `已将 ${books.length} 本书放入书架` });
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     next(err);
@@ -251,13 +289,13 @@ router.post('/:id/books', async (req, res, next) => {
 });
 
 // 从书架移走一本书（location 重置为 none）
-router.delete('/:id/books/:bookId', async (req, res, next) => {
+router.delete('/:id/books/:bookId', checkContainerAccess('shelf', 'member'), async (req, res, next) => {
   try {
     const shelfId = parseId(req.params.id, '书架 ID');
     const bookId = parseId(req.params.bookId, '书籍 ID');
 
     const book = await prisma.book.findFirst({
-      where: { id: bookId, locationType: 'shelf', locationId: shelfId },
+      where: { id: bookId, locationType: 'shelf', locationId: shelfId, deletedAt: null },
     });
 
     if (!book) {

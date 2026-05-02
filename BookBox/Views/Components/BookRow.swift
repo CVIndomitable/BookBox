@@ -8,7 +8,7 @@ struct BookRow: View {
     var body: some View {
         HStack(spacing: 12) {
             // 封面缩略图
-            AsyncImage(url: book.coverUrl.flatMap { URL(string: $0) }) { phase in
+            AsyncImage(url: book.coverDisplayUrl) { phase in
                 switch phase {
                 case .success(let image):
                     image

@@ -9,6 +9,23 @@ settings:
   base:
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_TEAM: "T3494BN262"
+schemes:
+  BookBox-Production:
+    build:
+      targets:
+        BookBox: all
+    run:
+      config: Release
+    archive:
+      config: Release
+  BookBox-Development:
+    build:
+      targets:
+        BookBox: all
+    run:
+      config: Debug
+    archive:
+      config: Debug
 targets:
   BookBox:
     type: application
@@ -22,6 +39,14 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         TARGETED_DEVICE_FAMILY: "1"
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE: false
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEV
+          PRODUCT_BUNDLE_IDENTIFIER: com.bookbox.app.dev
+          ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        Release:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: ""
+          PRODUCT_BUNDLE_IDENTIFIER: com.bookbox.app
     info:
       path: BookBox/Info.plist
       properties:

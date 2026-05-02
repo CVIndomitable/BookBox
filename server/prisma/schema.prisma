@@ -7,12 +7,31 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// 用户表
+model User {
+  id              Int       @id @default(autoincrement())
+  username        String    @unique @db.VarChar(50)
+  email           String?   @unique @db.VarChar(100)
+  passwordHash    String    @map("password_hash") @db.VarChar(255)
+  displayName     String?   @map("display_name") @db.VarChar(100)
+  apnsToken       String?   @map("apns_token") @db.VarChar(200)
+  defaultSunDays  Int       @default(365) @map("default_sun_days")  // 用户全局默认晒书间隔（天）
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  libraryMembers  LibraryMember[]
+  sunReminders    SunReminder[]
+
+  @@map("users")
+}
+
 // 书库表
 model Library {
   id          Int       @id @default(autoincrement())
   name        String    @db.VarChar(200)
   location    String?   @db.VarChar(200)
   description String?   @db.Text
+  sunDays     Int?      @map("sun_days")  // 书库级别晒书间隔，null 则继承用户全局设置
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
@@ -20,8 +39,26 @@ model Library {
   shelves     Shelf[]
   boxes       Box[]
   rooms       Room[]
+  members     LibraryMember[]
 
   @@map("libraries")
+}
+
+// 书库成员表（用户-书库关联）
+model LibraryMember {
+  id          Int       @id @default(autoincrement())
+  userId      Int       @map("user_id")
+  libraryId   Int       @map("library_id")
+  role        MemberRole @default(member)  // owner/admin/member
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  library     Library   @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, libraryId])
+  @@index([libraryId])
+  @@map("library_members")
 }
 
 // 房间表（介于书库和书架/箱子之间）
@@ -49,6 +86,8 @@ model Book {
   author        String?   @db.VarChar(500)
   isbn          String?   @db.VarChar(20)
   publisher     String?   @db.VarChar(200)
+  publishDate   String?   @map("publish_date") @db.VarChar(50)  // 出版时间：来源多样（2023-05/2023年5月/1999），用字符串存原文
+  price         Decimal?  @db.Decimal(10, 2)                    // 定价（元），保留两位小数
   coverUrl      String?   @map("cover_url") @db.Text
   categoryId    Int?      @map("category_id")
   verifyStatus  String?   @map("verify_status") @db.VarChar(20)  // matched/uncertain/not_found/manual
@@ -59,6 +98,7 @@ model Book {
   libraryId     Int?      @map("library_id")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")                       // 回收站：软删时间；null 表示未删；30 天后由清理任务物理删除
 
   category      Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   library       Library?  @relation(fields: [libraryId], references: [id], onDelete: SetNull)
@@ -69,6 +109,7 @@ model Book {
   @@index([categoryId])
   @@index([verifyStatus])
   @@index([isbn])
+  @@index([deletedAt])
   @@map("books")
 }
 
@@ -101,6 +142,7 @@ model Box {
   bookCount   Int      @default(0) @map("book_count")
   libraryId   Int?     @map("library_id")
   roomId      Int?     @map("room_id")
+  sunDays     Int?     @map("sun_days")  // 箱子级别晒书间隔，null 则继承书库或用户设置
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
@@ -213,6 +255,28 @@ model CacheStat {
   @@map("cache_stats")
 }
 
+// 晒书提醒表
+model SunReminder {
+  id          Int       @id @default(autoincrement())
+  userId      Int       @map("user_id")
+  targetType  String    @map("target_type") @db.VarChar(10)  // library/box
+  targetId    Int       @map("target_id")
+  targetName  String    @map("target_name") @db.VarChar(200)  // 冗余存储，方便推送显示
+  lastSunAt   DateTime? @map("last_sun_at")  // 上次晒书时间
+  nextSunAt   DateTime  @map("next_sun_at")  // 下次晒书时间
+  sunDays     Int       @map("sun_days")     // 晒书间隔（天）
+  notified    Boolean   @default(false)      // 是否已推送
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([nextSunAt, notified])
+  @@index([targetType, targetId])
+  @@map("sun_reminders")
+}
+
 enum ScanMode {
   preclassify
   boxing
@@ -221,4 +285,10 @@ enum ScanMode {
 enum RegionMode {
   mainland
   overseas
+}
+
+enum MemberRole {
+  owner
+  admin
+  member
 }

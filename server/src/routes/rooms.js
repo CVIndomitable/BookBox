@@ -2,15 +2,37 @@ import { Router } from 'express';
 import prisma from '../utils/prisma.js';
 import { parseId, parseOptionalId } from '../utils/validate.js';
 import { handleTxConflict } from '../services/bookLocation.js';
+import { authenticate, checkLibraryAccess, checkContainerAccess } from '../middleware/auth.js';
 
 const router = Router();
 
-// 获取房间列表（支持按 libraryId 筛选）
-router.get('/', async (req, res, next) => {
+// 获取房间列表（可选 libraryId：传了则返回该书库的房间，不传则返回用户所有书库的房间）
+router.get('/', authenticate, async (req, res, next) => {
   try {
     const where = {};
-    const libraryId = parseOptionalId(req.query.libraryId);
-    if (libraryId) where.libraryId = libraryId;
+
+    // 如果指定了 libraryId，校验权限并过滤
+    if (req.query.libraryId) {
+      const libraryId = parseId(req.query.libraryId, '书库 ID');
+      const membership = await prisma.libraryMember.findUnique({
+        where: { userId_libraryId: { userId: req.user.id, libraryId } },
+      });
+      if (!membership) {
+        return res.status(403).json({ error: '无权访问此书库' });
+      }
+      where.libraryId = libraryId;
+    } else {
+      // 不传 libraryId：返回用户所有书库的房间
+      const memberships = await prisma.libraryMember.findMany({
+        where: { userId: req.user.id },
+        select: { libraryId: true },
+      });
+      const libraryIds = memberships.map(m => m.libraryId);
+      if (libraryIds.length === 0) {
+        return res.json([]);
+      }
+      where.libraryId = { in: libraryIds };
+    }
 
     const rooms = await prisma.room.findMany({
       where,
@@ -18,12 +40,13 @@ router.get('/', async (req, res, next) => {
     });
     res.json(rooms);
   } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     next(err);
   }
 });
 
-// 新建房间
-router.post('/', async (req, res, next) => {
+// 新建房间（必须是该书库 admin 或以上）
+router.post('/', checkLibraryAccess('admin'), async (req, res, next) => {
   try {
     const { name, description, libraryId } = req.body;
 
@@ -50,7 +73,7 @@ router.post('/', async (req, res, next) => {
 });
 
 // 房间详情（附带其中的书架/箱子）
-router.get('/:id', async (req, res, next) => {
+router.get('/:id', checkContainerAccess('room', 'member'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '房间 ID');
 
@@ -80,7 +103,7 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // 更新房间（name/description；默认房间不允许改名为空）
-router.put('/:id', async (req, res, next) => {
+router.put('/:id', checkContainerAccess('room', 'admin'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '房间 ID');
     const { name, description } = req.body;
@@ -104,7 +127,7 @@ router.put('/:id', async (req, res, next) => {
 // 删除房间
 // - 默认房间不允许删除
 // - 若房间下还有书架/箱子，将其转移到同书库的默认房间
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', checkContainerAccess('room', 'admin'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '房间 ID');
 

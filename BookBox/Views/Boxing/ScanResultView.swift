@@ -275,6 +275,8 @@ struct ScanResultView: View {
                         author: item.finalAuthor,
                         isbn: item.verifyResult?.isbn,
                         publisher: nil,
+                        publishDate: nil,
+                        price: nil,
                         coverUrl: item.verifyResult?.coverUrl,
                         categoryId: nil,
                         verifyStatus: item.verifyResult?.status ?? item.status,

@@ -62,11 +62,8 @@ final class NetworkService: ObservableObject {
 
     @Published var isLoading = false
 
-    /// 服务器地址（硬编码）
-    let baseURL = AppConfig.serverBaseURL
-
-    /// 认证 token（硬编码）
-    let apiToken = AppConfig.apiToken
+    /// 服务器地址（根据编译配置切换）
+    let baseURL = AppConfig.current
 
     private let session: URLSession
     private let decoder: JSONDecoder
@@ -131,7 +128,16 @@ final class NetworkService: ObservableObject {
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = method
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
+        if let token = AuthService.shared.token {
+            urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        // 非幂等写请求带一个稳定的 X-Request-Id，网络抖动重试时服务端可识别去重，
+        // 避免重复下单/建书。GET 天然幂等，不需要 ID。
+        let isWrite = method == "POST" || method == "PUT" || method == "DELETE"
+        if isWrite {
+            urlRequest.setValue(UUID().uuidString, forHTTPHeaderField: "X-Request-Id")
+        }
 
         // 非幂等写请求带一个稳定的 X-Request-Id，网络抖动重试时服务端可识别去重，
         // 避免重复下单/建书。GET 天然幂等，不需要 ID。
@@ -196,6 +202,10 @@ final class NetworkService: ObservableObject {
             #if DEBUG
             print("[NET] HTTP 错误: \(httpResponse.statusCode) - \(message ?? "无内容")")
             #endif
+            // 401 视为登录态失效，清 token 触发 LoginView
+            if httpResponse.statusCode == 401 {
+                AuthService.shared.clear()
+            }
             throw NetworkError.httpError(httpResponse.statusCode, message)
         }
 
@@ -219,6 +229,35 @@ final class NetworkService: ObservableObject {
     /// 详细连通性检测（服务器、数据库、AI）
     func checkHealth() async throws -> HealthCheckResult {
         try await request("GET", path: "/health/detailed", timeout: 15)
+    }
+
+    // MARK: - 认证 API
+
+    struct LoginRequest: Codable { let username: String; let password: String }
+    struct RegisterRequest: Codable {
+        let username: String
+        let password: String
+        let email: String?
+        let displayName: String?
+    }
+    struct AuthResponse: Codable { let user: AuthUser; let token: String }
+
+    func login(username: String, password: String) async throws {
+        let resp: AuthResponse = try await request(
+            "POST",
+            path: "/auth/login",
+            body: LoginRequest(username: username, password: password)
+        )
+        AuthService.shared.setSession(token: resp.token, user: resp.user)
+    }
+
+    func register(username: String, password: String, email: String?, displayName: String?) async throws {
+        let resp: AuthResponse = try await request(
+            "POST",
+            path: "/auth/register",
+            body: RegisterRequest(username: username, password: password, email: email, displayName: displayName)
+        )
+        AuthService.shared.setSession(token: resp.token, user: resp.user)
     }
 
     // MARK: - 书库 API
@@ -417,8 +456,24 @@ final class NetworkService: ObservableObject {
         try await request("PUT", path: "/books/\(id)", body: book)
     }
 
+    /// 软删：把书放进回收站（服务端会在 30 天后物理删除）
     func deleteBook(id: Int) async throws -> EmptyResponse {
         try await request("DELETE", path: "/books/\(id)")
+    }
+
+    // MARK: - 回收站
+
+    func fetchTrashedBooks() async throws -> TrashResponse {
+        try await request("GET", path: "/books/trash")
+    }
+
+    func restoreBook(id: Int) async throws -> EmptyResponse {
+        try await request("POST", path: "/books/\(id)/restore")
+    }
+
+    /// 跳过 30 天等待，立即彻底删除
+    func purgeBook(id: Int) async throws -> EmptyResponse {
+        try await request("DELETE", path: "/books/\(id)/purge")
     }
 
     // MARK: - 移动书籍
@@ -522,6 +577,20 @@ final class NetworkService: ObservableObject {
         return result
     }
 
+    /// 从照片提取书籍详情（ISBN/出版时间/定价/出版社），并尝试匹配库内已有书
+    /// libraryId 传了就只在该库内匹配；不传则跨全库
+    func extractBookDetails(imageData: Data, libraryId: Int? = nil) async throws -> ExtractBookDetailsResponse {
+        struct Req: Codable { let image: String; let libraryId: Int? }
+        let base64 = imageData.base64EncodedString()
+        let response: ExtractBookDetailsResponse = try await request(
+            "POST",
+            path: "/llm/extract-book-details",
+            body: Req(image: base64, libraryId: libraryId),
+            timeout: 120
+        )
+        return response
+    }
+
     /// Siri/语音查书的智能搜索：严格子串 → 归一化宽松 → AI 兜底
     /// method 告诉调用方匹配等级：strict 精确、loose 宽松、ai 由 AI 猜的、none 没找到
     /// useAI=false 时只跑 DB 两层（供级联流程里前几轮只做快速筛查用）
@@ -562,6 +631,148 @@ final class NetworkService: ObservableObject {
         ]
         if let mode { queryItems.append(URLQueryItem(name: "mode", value: mode.rawValue)) }
         return try await request("GET", path: "/scans", queryItems: queryItems)
+    }
+
+    // MARK: - 封面上传 API
+
+    func uploadCover(bookId: Int, imageData: Data) async throws -> Book {
+        guard var components = URLComponents(string: baseURL + "/covers/\(bookId)") else {
+            throw NetworkError.invalidURL
+        }
+        guard let url = components.url else {
+            throw NetworkError.invalidURL
+        }
+
+        let boundary = UUID().uuidString
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        if let token = AuthService.shared.token {
+            urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        urlRequest.setValue(UUID().uuidString, forHTTPHeaderField: "X-Request-Id")
+
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"cover\"; filename=\"cover.jpg\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
+        body.append(imageData)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+
+        urlRequest.httpBody = body
+
+        isLoading = true
+        defer { isLoading = false }
+
+        let (data, response) = try await session.data(for: urlRequest)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.invalidResponse
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let message = String(data: data, encoding: .utf8)
+            if httpResponse.statusCode == 401 {
+                AuthService.shared.clear()
+            }
+            throw NetworkError.httpError(httpResponse.statusCode, message)
+        }
+
+        return try decoder.decode(Book.self, from: data)
+    }
+
+    func deleteCover(bookId: Int) async throws -> Book {
+        try await request("DELETE", path: "/covers/\(bookId)")
+    }
+
+    // MARK: - 书库成员 API
+
+    func fetchMembers(libraryId: Int) async throws -> [LibraryMember] {
+        let resp: MembersResponse = try await request("GET", path: "/library-members/\(libraryId)/members")
+        return resp.members
+    }
+
+    func addMember(libraryId: Int, username: String, role: MemberRole) async throws -> LibraryMember {
+        struct AddResp: Codable { let member: LibraryMember }
+        let resp: AddResp = try await request(
+            "POST",
+            path: "/library-members/\(libraryId)/members",
+            body: AddMemberRequest(username: username, role: role)
+        )
+        return resp.member
+    }
+
+    func updateMemberRole(libraryId: Int, userId: Int, role: MemberRole) async throws -> LibraryMember {
+        struct UpdateResp: Codable { let member: LibraryMember }
+        let resp: UpdateResp = try await request(
+            "PATCH",
+            path: "/library-members/\(libraryId)/members/\(userId)",
+            body: UpdateMemberRoleRequest(role: role)
+        )
+        return resp.member
+    }
+
+    func removeMember(libraryId: Int, userId: Int) async throws {
+        let _: EmptyResponse = try await request("DELETE", path: "/library-members/\(libraryId)/members/\(userId)")
+    }
+
+    func transferOwnership(libraryId: Int, to username: String) async throws {
+        let _: EmptyResponse = try await request(
+            "POST",
+            path: "/library-members/\(libraryId)/transfer",
+            body: TransferOwnershipRequest(username: username)
+        )
+    }
+
+    func leaveLibrary(libraryId: Int) async throws {
+        let _: EmptyResponse = try await request("POST", path: "/library-members/\(libraryId)/leave")
+    }
+
+    // MARK: - 晒书提醒 API
+
+    func fetchSunReminders() async throws -> [SunReminder] {
+        let resp: SunReminderListResponse = try await request("GET", path: "/sun-reminders")
+        return resp.reminders
+    }
+
+    func createLibrarySunReminder(libraryId: Int, sunDays: Int? = nil) async throws -> SunReminder {
+        struct CreateResp: Codable { let reminder: SunReminder }
+        let resp: CreateResp = try await request(
+            "POST",
+            path: "/sun-reminders/library/\(libraryId)",
+            body: CreateSunReminderRequest(sunDays: sunDays)
+        )
+        return resp.reminder
+    }
+
+    func createBoxSunReminder(boxId: Int, sunDays: Int? = nil) async throws -> SunReminder {
+        struct CreateResp: Codable { let reminder: SunReminder }
+        let resp: CreateResp = try await request(
+            "POST",
+            path: "/sun-reminders/box/\(boxId)",
+            body: CreateSunReminderRequest(sunDays: sunDays)
+        )
+        return resp.reminder
+    }
+
+    func updateSunReminder(id: Int, sunDays: Int) async throws -> SunReminder {
+        struct UpdateResp: Codable { let reminder: SunReminder }
+        let resp: UpdateResp = try await request(
+            "PATCH",
+            path: "/sun-reminders/\(id)",
+            body: UpdateSunReminderRequest(sunDays: sunDays)
+        )
+        return resp.reminder
+    }
+
+    func markSunReminderAsSunned(id: Int) async throws -> SunReminder {
+        struct MarkResp: Codable { let reminder: SunReminder }
+        let resp: MarkResp = try await request("POST", path: "/sun-reminders/\(id)/mark-sunned")
+        return resp.reminder
+    }
+
+    func deleteSunReminder(id: Int) async throws {
+        let _: EmptyResponse = try await request("DELETE", path: "/sun-reminders/\(id)")
     }
 }
 

@@ -26,7 +26,13 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    LabeledContent("服务器地址", value: AppConfig.serverBaseURL)
+                    LabeledContent("服务器地址", value: AppConfig.current)
+                    if let username = AuthService.shared.user?.username {
+                        LabeledContent("当前用户", value: username)
+                    }
+                    Button("退出登录", role: .destructive) {
+                        AuthService.shared.clear()
+                    }
                         .font(.caption)
                 } header: {
                     Text("服务器")
@@ -179,6 +185,16 @@ struct SettingsView: View {
                     Text("查重")
                 } footer: {
                     Text("加书时查重：添加书籍时若已存在书名与出版社完全一致的书将提醒。\n显示「查重」Tab：在底部增加「查重」模块，一键扫描已录入书库的全部重复书。两项均默认关闭。")
+                }
+
+                Section {
+                    NavigationLink {
+                        TrashView()
+                    } label: {
+                        Label("回收站", systemImage: "trash")
+                    }
+                } footer: {
+                    Text("删除的书先进入回收站，30 天内可还原，过期后自动彻底删除。")
                 }
 
                 Section {
@@ -370,7 +386,7 @@ struct SettingsView: View {
             do {
                 healthResult = try await NetworkService.shared.checkHealth()
             } catch {
-                healthError = "无法连接到服务器"
+                healthError = error.chineseDescription
             }
             isCheckingHealth = false
         }

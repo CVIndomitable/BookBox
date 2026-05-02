@@ -42,11 +42,11 @@ export async function validateLocation(tx, locationType, locationId) {
   return null;
 }
 
-// 重新 COUNT 指定容器的书数并写回
+// 重新 COUNT 指定容器的书数并写回（排除回收站里的书）
 export async function updateContainerCount(tx, type, id) {
   if (!type || !id || type === 'none') return;
   const count = await tx.book.count({
-    where: { locationType: type, locationId: id },
+    where: { locationType: type, locationId: id, deletedAt: null },
   });
   if (type === 'shelf') {
     await tx.shelf.update({ where: { id }, data: { bookCount: count } });
