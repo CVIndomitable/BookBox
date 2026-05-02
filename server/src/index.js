@@ -58,6 +58,7 @@ app.use(cors({
 // 审计：剩余路由（rooms/shelves/boxes/categories/libraries/logs/scans/settings/suppliers
 // /llm/voice-command/llm/find-book/auth）均为小 JSON，无需单设上限。
 app.use('/api/llm/recognize', express.json({ limit: '10mb' }));
+app.use('/api/llm/recognize-compare', express.json({ limit: '10mb' }));
 app.use('/api/books', express.json({ limit: '2mb' }));
 app.use(express.json({ limit: '1mb' }));
 

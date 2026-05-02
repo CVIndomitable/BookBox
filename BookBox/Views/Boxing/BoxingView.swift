@@ -42,6 +42,7 @@ struct BoxPickerView: View {
     @State private var showBoxCreate = false
     @State private var searchText = ""
     @State private var errorMessage: String?
+    @State private var selectedLibraryId: Int? = nil  // nil 表示"全部书库"
 
     // 搜索模式下的扁平结果
     private var filteredBoxes: [Box] {
@@ -137,6 +138,18 @@ struct BoxPickerView: View {
             ToolbarItem(placement: .topBarLeading) {
                 Button("关闭") { onCancel() }
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Picker("筛选书库", selection: $selectedLibraryId) {
+                        Text("全部书库").tag(nil as Int?)
+                        ForEach(libraries) { lib in
+                            Text(lib.name).tag(lib.id as Int?)
+                        }
+                    }
+                } label: {
+                    Label("筛选", systemImage: "line.3.horizontal.decrease.circle")
+                }
+            }
         }
         .sheet(isPresented: $showBoxCreate) {
             NavigationStack {
@@ -146,6 +159,9 @@ struct BoxPickerView: View {
             }
         }
         .task { await load() }
+        .onChange(of: selectedLibraryId) { _, _ in
+            Task { await load() }
+        }
         .alert("错误", isPresented: .init(
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }
@@ -252,7 +268,7 @@ struct BoxPickerView: View {
 
     private func load() async {
         isLoading = true
-        async let boxesTask = NetworkService.shared.fetchBoxes()
+        async let boxesTask = NetworkService.shared.fetchBoxes(libraryId: selectedLibraryId)
         async let librariesTask = NetworkService.shared.fetchLibraries()
         async let roomsTask = NetworkService.shared.fetchRooms()
         do {
