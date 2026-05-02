@@ -97,7 +97,7 @@ struct TrashView: View {
     @ViewBuilder
     private func row(_ book: Book) -> some View {
         HStack(spacing: 12) {
-            AsyncImage(url: book.coverUrl.flatMap { URL(string: $0) }) { phase in
+            AsyncImage(url: book.coverDisplayUrl) { phase in
                 switch phase {
                 case .success(let image):
                     image.resizable().aspectRatio(contentMode: .fill)

@@ -45,6 +45,16 @@ struct Book: Identifiable, Codable, Hashable {
     // 定价：Prisma Decimal 序列化后是字符串（如 "29.80"），直接按 String 解码避免精度问题
     var price: String?
     var coverUrl: String?
+    /// 构造可展示的封面 URL（绝对 URL 直接使用，相对路径拼接服务器地址）
+    var coverDisplayUrl: URL? {
+        guard let url = coverUrl else { return nil }
+        if url.hasPrefix("http://") || url.hasPrefix("https://") {
+            return URL(string: url)
+        }
+        let base = AppConfig.current
+        let root = base.hasSuffix("/api") ? String(base.dropLast(4)) : base
+        return URL(string: root + url)
+    }
     var categoryId: Int?
     var verifyStatus: VerifyStatus?
     var verifySource: String?

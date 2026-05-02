@@ -677,6 +677,11 @@ struct LibraryBookDetailView: View {
     @State private var showCandidatePicker = false
     @State private var showExtractedPreview = false
 
+    // 封面上传
+    @State private var showCoverPicker = false
+    @State private var coverImage: UIImage?
+    @State private var isUploadingCover = false
+
     var body: some View {
         Group {
             if isLoading {
@@ -684,18 +689,52 @@ struct LibraryBookDetailView: View {
             } else if let detail {
                 List {
                     // 封面
-                    if let coverUrl = detail.coverUrl, let url = URL(string: coverUrl) {
-                        Section {
-                            AsyncImage(url: url) { image in
-                                image
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(maxHeight: 200)
-                            } placeholder: {
-                                ProgressView()
+                    Section {
+                        VStack(spacing: 12) {
+                            if let url = detail.coverDisplayUrl {
+                                AsyncImage(url: url) { image in
+                                    image
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(maxHeight: 200)
+                                } placeholder: {
+                                    ProgressView()
+                                }
+                                .frame(maxWidth: .infinity)
                             }
-                            .frame(maxWidth: .infinity)
+
+                            if isUploadingCover {
+                                ProgressView("上传中…")
+                            } else {
+                                HStack(spacing: 16) {
+                                    Button {
+                                        showCoverPicker = true
+                                    } label: {
+                                        Label(detail.coverUrl == nil ? "添加封面" : "更换封面",
+                                              systemImage: "photo.badge.plus")
+                                    }
+                                    .buttonStyle(.bordered)
+
+                                    if detail.coverUrl != nil {
+                                        Button(role: .destructive) {
+                                            Task {
+                                                do {
+                                                    detail = try await NetworkService.shared.deleteCover(bookId: book.id)
+                                                } catch {
+                                                    errorMessage = error.chineseDescription
+                                                }
+                                            }
+                                        } label: {
+                                            Label("删除封面", systemImage: "trash")
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .tint(.red)
+                                    }
+                                }
+                            }
                         }
+                    } header: {
+                        Text("封面")
                     }
 
                     Section {
@@ -897,6 +936,27 @@ struct LibraryBookDetailView: View {
         .onChange(of: detailImage) { _, newValue in
             guard let img = newValue else { return }
             extractDetailsFromImage(img)
+        }
+        .sheet(isPresented: $showCoverPicker) {
+            PhotoPickerView(selectedImage: $coverImage)
+                .ignoresSafeArea()
+        }
+        .onChange(of: coverImage) { _, newValue in
+            guard let img = newValue else { return }
+            isUploadingCover = true
+            Task {
+                do {
+                    guard let data = img.jpegData(compressionQuality: 0.8) else {
+                        errorMessage = "图片压缩失败"
+                        isUploadingCover = false
+                        return
+                    }
+                    detail = try await NetworkService.shared.uploadCover(bookId: book.id, imageData: data)
+                } catch {
+                    errorMessage = error.chineseDescription
+                }
+                isUploadingCover = false
+            }
         }
         .sheet(isPresented: $showExtractedPreview) {
             if let extracted = extractResult?.extracted {
