@@ -1,0 +1,32 @@
+{
+  "name": "bookbox-server",
+  "version": "1.0.0",
+  "description": "BookBox 书籍整理与装箱管理系统后端",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "db:generate": "npx prisma generate",
+    "db:push": "npx prisma db push",
+    "db:migrate": "npx prisma migrate dev",
+    "db:studio": "npx prisma studio"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "apn": "^2.2.0",
+    "bcrypt": "^5.1.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.1",
+    "express": "^5.2.1",
+    "express-rate-limit": "^7.5.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.1.1"
+  },
+  "devDependencies": {
+    "prisma": "^6.19.3"
+  }
+}

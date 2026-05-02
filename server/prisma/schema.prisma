@@ -1,0 +1,297 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// 用户表
+model User {
+  id              Int       @id @default(autoincrement())
+  username        String    @unique @db.VarChar(50)
+  email           String?   @unique @db.VarChar(100)
+  passwordHash    String    @map("password_hash") @db.VarChar(255)
+  displayName     String?   @map("display_name") @db.VarChar(100)
+  apnsToken       String?   @map("apns_token") @db.VarChar(200)
+  defaultSunDays  Int       @default(365) @map("default_sun_days")  // 用户全局默认晒书间隔（天）
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  libraryMembers  LibraryMember[]
+  sunReminders    SunReminder[]
+
+  @@map("users")
+}
+
+// 书库表
+model Library {
+  id          Int       @id @default(autoincrement())
+  name        String    @db.VarChar(200)
+  location    String?   @db.VarChar(200)
+  description String?   @db.Text
+  sunDays     Int?      @map("sun_days")  // 书库级别晒书间隔，null 则继承用户全局设置
+  libraryType String    @default("user") @map("library_type") @db.VarChar(20)  // user/system
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  books       Book[]
+  shelves     Shelf[]
+  boxes       Box[]
+  rooms       Room[]
+  members     LibraryMember[]
+
+  @@map("libraries")
+}
+
+// 书库成员表（用户-书库关联）
+model LibraryMember {
+  id          Int       @id @default(autoincrement())
+  userId      Int       @map("user_id")
+  libraryId   Int       @map("library_id")
+  role        MemberRole @default(member)  // owner/admin/member
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  library     Library   @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, libraryId])
+  @@index([libraryId])
+  @@map("library_members")
+}
+
+// 房间表（介于书库和书架/箱子之间）
+model Room {
+  id          Int       @id @default(autoincrement())
+  name        String    @db.VarChar(200)
+  description String?   @db.Text
+  isDefault   Boolean   @default(false) @map("is_default")
+  libraryId   Int       @map("library_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  library     Library   @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  shelves     Shelf[]
+  boxes       Box[]
+
+  @@index([libraryId])
+  @@map("rooms")
+}
+
+// 书籍表
+model Book {
+  id            Int       @id @default(autoincrement())
+  title         String    @db.VarChar(500)
+  author        String?   @db.VarChar(500)
+  isbn          String?   @db.VarChar(20)
+  publisher     String?   @db.VarChar(200)
+  publishDate   String?   @map("publish_date") @db.VarChar(50)  // 出版时间：来源多样（2023-05/2023年5月/1999），用字符串存原文
+  price         Decimal?  @db.Decimal(10, 2)                    // 定价（元），保留两位小数
+  coverUrl      String?   @map("cover_url") @db.Text
+  categoryId    Int?      @map("category_id")
+  verifyStatus  String?   @map("verify_status") @db.VarChar(20)  // matched/uncertain/not_found/manual
+  verifySource  String?   @map("verify_source") @db.VarChar(50)
+  rawOcrText    String?   @map("raw_ocr_text") @db.Text
+  locationType  String    @default("none") @map("location_type") @db.VarChar(10)  // shelf/box/none
+  locationId    Int?      @map("location_id")
+  libraryId     Int?      @map("library_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")                       // 回收站：软删时间；null 表示未删；30 天后由清理任务物理删除
+  cacheSourceBookId Int?   @map("cache_source_book_id")             // 指向图书馆缓存来源书籍
+
+  category      Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  library       Library?  @relation(fields: [libraryId], references: [id], onDelete: SetNull)
+  logs          BookLog[]
+
+  @@index([locationType, locationId])
+  @@index([libraryId])
+  @@index([categoryId])
+  @@index([verifyStatus])
+  @@index([isbn])
+  @@index([deletedAt])
+  @@map("books")
+}
+
+// 书架表
+model Shelf {
+  id          Int       @id @default(autoincrement())
+  name        String    @db.VarChar(200)
+  location    String?   @db.VarChar(200)
+  description String?   @db.Text
+  bookCount   Int       @default(0) @map("book_count")
+  libraryId   Int?      @map("library_id")
+  roomId      Int?      @map("room_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  library     Library?  @relation(fields: [libraryId], references: [id], onDelete: SetNull)
+  room        Room?     @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  @@index([libraryId])
+  @@index([roomId])
+  @@map("shelves")
+}
+
+// 箱子表
+model Box {
+  id          Int      @id @default(autoincrement())
+  boxUid      String   @unique @map("box_uid") @db.VarChar(20)
+  name        String   @db.VarChar(200)
+  description String?  @db.Text
+  bookCount   Int      @default(0) @map("book_count")
+  libraryId   Int?     @map("library_id")
+  roomId      Int?     @map("room_id")
+  sunDays     Int?     @map("sun_days")  // 箱子级别晒书间隔，null 则继承书库或用户设置
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  library     Library?      @relation(fields: [libraryId], references: [id], onDelete: SetNull)
+  room        Room?         @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  scanRecords ScanRecord[]
+
+  @@index([libraryId])
+  @@index([roomId])
+  @@map("boxes")
+}
+
+// 操作日志表
+model BookLog {
+  id          Int       @id @default(autoincrement())
+  bookId      Int?      @map("book_id")
+  action      String    @db.VarChar(20)     // move/add/remove/edit/verify
+  fromType    String?   @map("from_type") @db.VarChar(10)
+  fromId      Int?      @map("from_id")
+  toType      String?   @map("to_type") @db.VarChar(10)
+  toId        Int?      @map("to_id")
+  method      String    @default("manual") @db.VarChar(20)
+  rawInput    String?   @map("raw_input") @db.Text
+  aiResponse  String?   @map("ai_response") @db.Text
+  note        String?   @db.Text
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  book        Book?     @relation(fields: [bookId], references: [id], onDelete: SetNull)
+
+  @@index([bookId])
+  @@map("book_logs")
+}
+
+// 分类表
+model Category {
+  id           Int    @id @default(autoincrement())
+  name         String @db.VarChar(100)
+  parentId     Int?   @map("parent_id")
+  categoryType String @default("user") @map("category_type") @db.VarChar(20)  // user/statutory
+
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children Category[] @relation("CategoryTree")
+  books    Book[]
+
+  @@index([parentId])
+  @@map("categories")
+}
+
+// 扫描记录表
+model ScanRecord {
+  id              Int      @id @default(autoincrement())
+  mode            ScanMode
+  boxId           Int?     @map("box_id")
+  photoPath       String?  @map("photo_path") @db.Text
+  ocrResult       Json?    @map("ocr_result")
+  extractedTitles Json?    @map("extracted_titles")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  box             Box?     @relation(fields: [boxId], references: [id], onDelete: SetNull)
+
+  @@index([boxId])
+  @@index([mode])
+  @@map("scan_records")
+}
+
+// 用户设置表
+model UserSetting {
+  id                Int        @id @default(autoincrement())
+  regionMode        RegionMode @default(mainland) @map("region_mode")
+  llmProvider       String?    @map("llm_provider") @db.VarChar(50)
+  llmApiKey         String?    @map("llm_api_key") @db.VarChar(500)
+  llmEndpoint       String?    @map("llm_endpoint") @db.VarChar(500)
+  llmModel          String?    @map("llm_model") @db.VarChar(100)
+  llmSupportsSearch Boolean    @default(false) @map("llm_supports_search")
+
+  @@map("user_settings")
+}
+
+// AI 供应商池：多供应商按优先级故障转移
+model LlmSupplier {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(100)              // 显示名，如 mimo、openai、deepseek
+  protocol    String   @default("anthropic") @db.VarChar(20)  // anthropic / openai
+  endpoint    String   @db.VarChar(500)
+  apiKey      String   @map("api_key") @db.VarChar(500)
+  visionModel String?  @map("vision_model") @db.VarChar(100)
+  textModel   String?  @map("text_model") @db.VarChar(100)
+  priority    Int      @default(100)                 // 越大越优先
+  enabled     Boolean  @default(true)
+  timeoutMs   Int      @default(120000) @map("timeout_ms")
+  note        String?  @db.Text
+  lastOkAt    DateTime? @map("last_ok_at")
+  lastFailAt  DateTime? @map("last_fail_at")
+  lastError   String?  @map("last_error") @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([enabled, priority])
+  @@map("llm_suppliers")
+}
+
+// 缓存命中率统计表
+model CacheStat {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique @db.VarChar(50)  // 缓存名称，如 "voice_command"
+  hits      Int      @default(0)
+  misses    Int      @default(0)
+  startedAt DateTime @default(now()) @map("started_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("cache_stats")
+}
+
+// 晒书提醒表
+model SunReminder {
+  id          Int       @id @default(autoincrement())
+  userId      Int       @map("user_id")
+  targetType  String    @map("target_type") @db.VarChar(10)  // library/box
+  targetId    Int       @map("target_id")
+  targetName  String    @map("target_name") @db.VarChar(200)  // 冗余存储，方便推送显示
+  lastSunAt   DateTime? @map("last_sun_at")  // 上次晒书时间
+  nextSunAt   DateTime  @map("next_sun_at")  // 下次晒书时间
+  sunDays     Int       @map("sun_days")     // 晒书间隔（天）
+  notified    Boolean   @default(false)      // 是否已推送
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([nextSunAt, notified])
+  @@index([targetType, targetId])
+  @@map("sun_reminders")
+}
+
+enum ScanMode {
+  preclassify
+  boxing
+}
+
+enum RegionMode {
+  mainland
+  overseas
+}
+
+enum MemberRole {
+  owner
+  admin
+  member
+}

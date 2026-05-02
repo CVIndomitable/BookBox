@@ -1,0 +1,33 @@
+# macOS
+.DS_Store
+
+# Node.js
+node_modules/
+server/node_modules/
+web/node_modules/
+
+# 构建产物
+web/dist/
+
+# 环境变量
+.env
+server/.env
+# web/.env.development 与 .env.production 只含路径片段，保留入库
+
+# 部署信息（含服务器密码、IP、Token 等敏感数据）
+docs/部署信息.md
+CONFIGURATION.md
+
+# 应用配置（含服务器地址、API Token）
+BookBox/Models/AppConfig.swift
+
+# Xcode
+BookBox.xcodeproj/xcuserdata/
+BookBox.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcuserstate
+build/
+DerivedData/
+
+# IDE
+.vscode/
+.idea/
