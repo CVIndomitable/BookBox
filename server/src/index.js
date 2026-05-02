@@ -52,7 +52,10 @@ app.use(cors({
     if (!origin) return cb(null, true); // 同源 / 原生客户端无 Origin
     if (allowedOrigins.includes('*')) return cb(null, true);
     if (allowedOrigins.includes(origin)) return cb(null, true);
-    return cb(new Error(`跨域来源不被允许: ${origin}`));
+    // 不在白名单的源不抛异常，避免造成 500 白屏；
+    // 浏览器会因缺少 CORS 头自行拦截跨域响应，安全由 authMiddleware 兜底
+    console.warn(`[CORS] 来源不在白名单: ${origin}`);
+    return cb(null, false);
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
