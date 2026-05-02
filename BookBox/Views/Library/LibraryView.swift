@@ -28,6 +28,9 @@ struct LibraryView: View {
     @State private var showCategories = false
     @State private var showScanHistory = false
     @State private var showDetailsScan = false
+    @State private var showMemberManage = false
+    @State private var showSunReminders = false
+    @State private var showSunReminderCreate = false
 
     enum ViewMode: String, CaseIterable {
         case overview = "总览"
@@ -77,6 +80,17 @@ struct LibraryView: View {
                         Button { showScanHistory = true } label: {
                             Label("扫描历史", systemImage: "doc.text.magnifyingglass")
                         }
+                        if selectedLibraryId != nil {
+                            Button { showMemberManage = true } label: {
+                                Label("成员管理", systemImage: "person.2")
+                            }
+                            Button { showSunReminderCreate = true } label: {
+                                Label("设置晒书提醒", systemImage: "sun.max")
+                            }
+                        }
+                        Button { showSunReminders = true } label: {
+                            Label("晒书提醒列表", systemImage: "clock.arrow.circlepath")
+                        }
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
@@ -93,6 +107,24 @@ struct LibraryView: View {
                             books[idx] = updated
                         }
                     }
+                }
+            }
+            .sheet(isPresented: $showMemberManage) {
+                MemberManageView(libraryId: selectedLibraryId ?? 0) {
+                    Task { await loadOverview() }
+                }
+            }
+            .sheet(isPresented: $showSunReminders) {
+                SunReminderView()
+            }
+            .sheet(isPresented: $showSunReminderCreate) {
+                if let libraryId = selectedLibraryId, let name = selectedLibrary?.name {
+                    SunReminderCreateView(
+                        targetType: "library",
+                        targetId: libraryId,
+                        targetName: name,
+                        onCreated: { showSunReminderCreate = false }
+                    )
                 }
             }
             .searchable(text: $searchText, prompt: "搜索书名或作者")

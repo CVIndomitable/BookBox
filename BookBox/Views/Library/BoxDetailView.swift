@@ -21,6 +21,7 @@ struct BoxDetailView: View {
     @State private var editRooms: [Room] = []
     @State private var editRoomId: Int?
     @State private var isLoadingEditRooms = false
+    @State private var showCreateSunReminder = false
 
     var body: some View {
         Group {
@@ -86,6 +87,11 @@ struct BoxDetailView: View {
                     } label: {
                         Label("编辑", systemImage: "pencil")
                     }
+                    Button {
+                        showCreateSunReminder = true
+                    } label: {
+                        Label("设置晒书提醒", systemImage: "sun.max")
+                    }
                     Button(role: .destructive) {
                         showDeleteConfirm = true
                     } label: {
@@ -110,6 +116,14 @@ struct BoxDetailView: View {
         }
         .sheet(isPresented: $showEdit) {
             editSheet
+        }
+        .sheet(isPresented: $showCreateSunReminder) {
+            SunReminderCreateView(
+                targetType: "box",
+                targetId: box.id,
+                targetName: detail?.name ?? box.name,
+                onCreated: { showCreateSunReminder = false }
+            )
         }
         .alert("确认删除", isPresented: $showDeleteConfirm) {
             Button("取消", role: .cancel) {}

@@ -33,6 +33,7 @@ router.get('/overview', async (req, res, next) => {
     let unlocatedWhere;
     let roomsQuery;
 
+    let myRole = null;
     if (libraryId) {
       const membership = await prisma.libraryMember.findUnique({
         where: { userId_libraryId: { userId: req.user.id, libraryId } },
@@ -40,6 +41,7 @@ router.get('/overview', async (req, res, next) => {
       if (!membership) {
         return res.status(403).json({ error: '无权访问此书库' });
       }
+      myRole = membership.role;
       containerWhere = { libraryId };
       unlocatedWhere = { libraryId, locationType: 'none', deletedAt: null };
       roomsQuery = prisma.room.findMany({
@@ -86,7 +88,7 @@ router.get('/overview', async (req, res, next) => {
     const boxSum = boxes.reduce((a, b) => a + (b.bookCount || 0), 0);
     const totalBooks = shelfSum + boxSum + unlocated;
 
-    res.json({ totalBooks, unlocated, rooms, shelves, boxes });
+    res.json({ totalBooks, unlocated, rooms, shelves, boxes, myRole });
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     next(err);

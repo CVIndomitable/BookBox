@@ -677,6 +677,96 @@ final class NetworkService: ObservableObject {
     func deleteCover(bookId: Int) async throws -> Book {
         try await request("DELETE", path: "/covers/\(bookId)")
     }
+
+    // MARK: - 书库成员 API
+
+    func fetchMembers(libraryId: Int) async throws -> [LibraryMember] {
+        let resp: MembersResponse = try await request("GET", path: "/library-members/\(libraryId)/members")
+        return resp.members
+    }
+
+    func addMember(libraryId: Int, username: String, role: MemberRole) async throws -> LibraryMember {
+        struct AddResp: Codable { let member: LibraryMember }
+        let resp: AddResp = try await request(
+            "POST",
+            path: "/library-members/\(libraryId)/members",
+            body: AddMemberRequest(username: username, role: role)
+        )
+        return resp.member
+    }
+
+    func updateMemberRole(libraryId: Int, userId: Int, role: MemberRole) async throws -> LibraryMember {
+        struct UpdateResp: Codable { let member: LibraryMember }
+        let resp: UpdateResp = try await request(
+            "PATCH",
+            path: "/library-members/\(libraryId)/members/\(userId)",
+            body: UpdateMemberRoleRequest(role: role)
+        )
+        return resp.member
+    }
+
+    func removeMember(libraryId: Int, userId: Int) async throws {
+        let _: EmptyResponse = try await request("DELETE", path: "/library-members/\(libraryId)/members/\(userId)")
+    }
+
+    func transferOwnership(libraryId: Int, to username: String) async throws {
+        let _: EmptyResponse = try await request(
+            "POST",
+            path: "/library-members/\(libraryId)/transfer",
+            body: TransferOwnershipRequest(username: username)
+        )
+    }
+
+    func leaveLibrary(libraryId: Int) async throws {
+        let _: EmptyResponse = try await request("POST", path: "/library-members/\(libraryId)/leave")
+    }
+
+    // MARK: - 晒书提醒 API
+
+    func fetchSunReminders() async throws -> [SunReminder] {
+        let resp: SunReminderListResponse = try await request("GET", path: "/sun-reminders")
+        return resp.reminders
+    }
+
+    func createLibrarySunReminder(libraryId: Int, sunDays: Int? = nil) async throws -> SunReminder {
+        struct CreateResp: Codable { let reminder: SunReminder }
+        let resp: CreateResp = try await request(
+            "POST",
+            path: "/sun-reminders/library/\(libraryId)",
+            body: CreateSunReminderRequest(sunDays: sunDays)
+        )
+        return resp.reminder
+    }
+
+    func createBoxSunReminder(boxId: Int, sunDays: Int? = nil) async throws -> SunReminder {
+        struct CreateResp: Codable { let reminder: SunReminder }
+        let resp: CreateResp = try await request(
+            "POST",
+            path: "/sun-reminders/box/\(boxId)",
+            body: CreateSunReminderRequest(sunDays: sunDays)
+        )
+        return resp.reminder
+    }
+
+    func updateSunReminder(id: Int, sunDays: Int) async throws -> SunReminder {
+        struct UpdateResp: Codable { let reminder: SunReminder }
+        let resp: UpdateResp = try await request(
+            "PATCH",
+            path: "/sun-reminders/\(id)",
+            body: UpdateSunReminderRequest(sunDays: sunDays)
+        )
+        return resp.reminder
+    }
+
+    func markSunReminderAsSunned(id: Int) async throws -> SunReminder {
+        struct MarkResp: Codable { let reminder: SunReminder }
+        let resp: MarkResp = try await request("POST", path: "/sun-reminders/\(id)/mark-sunned")
+        return resp.reminder
+    }
+
+    func deleteSunReminder(id: Int) async throws {
+        let _: EmptyResponse = try await request("DELETE", path: "/sun-reminders/\(id)")
+    }
 }
 
 /// 空响应体
