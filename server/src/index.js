@@ -189,6 +189,18 @@ app.use('/api/library-members', libraryMembersRouter);
 app.use('/api/sun-reminders', sunRemindersRouter);
 app.use('/api/covers', coversRouter);
 
+// Web 前端静态文件（构建产物放在 ../web 目录）
+app.use(express.static(path.join(__dirname, '../web')));
+
+// SPA fallback：非 API 路径返回 index.html（支持客户端路由）
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads')) {
+    res.sendFile(path.join(__dirname, '../web/index.html'));
+  } else {
+    next();
+  }
+});
+
 // 全局错误处理
 app.use((err, req, res, next) => {
   console.error('服务器错误:', err);
