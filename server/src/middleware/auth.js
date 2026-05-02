@@ -59,8 +59,35 @@ export function checkLibraryAccess(requiredRole = 'member') {
   return async (req, res, next) => {
     try {
       // libraryId 来源优先级：路径参数 > 查询参数 > body；兼容 /libraries/:id 这类路由
-      const rawId = req.params.libraryId ?? req.params.id ?? req.query.libraryId ?? req.body?.libraryId;
-      const libraryId = parseInt(rawId, 10);
+      let rawId = req.params.libraryId ?? req.params.id ?? req.query.libraryId ?? req.body?.libraryId;
+      let libraryId = parseInt(rawId, 10);
+
+      // 如果没有直接提供 libraryId，尝试从 locationId 推断（用于创建书籍等场景）
+      if (!Number.isInteger(libraryId) || libraryId <= 0) {
+        const locationType = req.body?.locationType;
+        const locationId = parseInt(req.body?.locationId, 10);
+
+        if (locationType && Number.isInteger(locationId) && locationId > 0) {
+          // 从箱子或书架推断 libraryId
+          let container = null;
+          if (locationType === 'box') {
+            container = await prisma.box.findUnique({
+              where: { id: locationId },
+              select: { libraryId: true },
+            });
+          } else if (locationType === 'shelf') {
+            container = await prisma.shelf.findUnique({
+              where: { id: locationId },
+              select: { libraryId: true },
+            });
+          }
+
+          if (container?.libraryId) {
+            libraryId = container.libraryId;
+          }
+        }
+      }
+
       if (!Number.isInteger(libraryId) || libraryId <= 0) {
         return res.status(400).json({ error: '缺少书库 ID' });
       }
