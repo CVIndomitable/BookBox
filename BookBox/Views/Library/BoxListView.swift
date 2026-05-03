@@ -181,6 +181,7 @@ struct BoxListView: View {
         do {
             boxes = try await NetworkService.shared.fetchBoxes()
         } catch {
+            if (error as? URLError)?.code == .cancelled { return }
             errorMessage = error.chineseDescription
         }
         isLoading = false

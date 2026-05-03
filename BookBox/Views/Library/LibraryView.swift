@@ -806,6 +806,7 @@ struct LibraryView: View {
                 }
             }
         } catch {
+            if (error as? URLError)?.code == .cancelled { return }
             errorMessage = error.chineseDescription
         }
         isLoadingLibraries = false
@@ -822,6 +823,7 @@ struct LibraryView: View {
         do {
             overview = try await NetworkService.shared.fetchLibraryOverview(libraryId: libraryId)
         } catch {
+            if (error as? URLError)?.code == .cancelled { return }
             errorMessage = error.chineseDescription
         }
         isLoading = false
@@ -844,6 +846,7 @@ struct LibraryView: View {
             totalBooks = response.pagination.total
             hasMore = books.count < totalBooks
         } catch {
+            if (error as? URLError)?.code == .cancelled { return }
             errorMessage = error.chineseDescription
         }
         isLoading = false
@@ -1018,7 +1021,22 @@ struct LibraryBookDetailView: View {
     @State private var editAuthor = ""
     @State private var editIsbn = ""
     @State private var editPublisher = ""
-    @State private var editPublishDate = ""
+    @State private var editEdition = ""
+    @State private var editAdaptation = ""
+    @State private var editTranslator = ""
+    @State private var editAuthorNationality = ""
+    @State private var editPublisherPerson = ""
+    @State private var editResponsibleEditor = ""
+    @State private var editResponsiblePrinting = ""
+    @State private var editCoverDesign = ""
+    @State private var editPhone = ""
+    @State private var editAddress = ""
+    @State private var editPostalCode = ""
+    @State private var editPrintingHouse = ""
+    @State private var editImpression = ""
+    @State private var editFormat = ""
+    @State private var editPrintedSheets = ""
+    @State private var editWordCount = ""
     @State private var editPrice = ""
     @State private var isSaving = false
     @State private var isConfirmingStatus = false
@@ -1033,6 +1051,8 @@ struct LibraryBookDetailView: View {
 
     // 封面上传
     @State private var showCoverPicker = false
+    @State private var showCoverCamera = false
+    @State private var showCoverScanner = false
     @State private var coverImage: UIImage?
     @State private var isUploadingCover = false
 
@@ -1053,15 +1073,37 @@ struct LibraryBookDetailView: View {
             .sheet(isPresented: $showEdit) {
                 NavigationStack {
                     Form {
-                        Section("书籍信息") {
+                        Section("基本信息") {
                             TextField("书名", text: $editTitle)
                             TextField("作者", text: $editAuthor)
+                            TextField("改编", text: $editAdaptation)
+                            TextField("译者", text: $editTranslator)
+                            TextField("作者国籍", text: $editAuthorNationality)
                             TextField("ISBN", text: $editIsbn)
                                 .keyboardType(.numbersAndPunctuation)
                             TextField("出版社", text: $editPublisher)
-                            TextField("出版时间（如 2023-05）", text: $editPublishDate)
+                            TextField("版次（如 2023年5月第1版）", text: $editEdition)
+                            TextField("出版人", text: $editPublisherPerson)
+                            TextField("责任编辑", text: $editResponsibleEditor)
+                            TextField("责任印制", text: $editResponsiblePrinting)
+                            TextField("封面设计", text: $editCoverDesign)
                             TextField("定价", text: $editPrice)
                                 .keyboardType(.decimalPad)
+                        }
+
+                        Section("出版信息") {
+                            TextField("印刷厂", text: $editPrintingHouse)
+                            TextField("印次（如 2023年5月第2次印刷）", text: $editImpression)
+                            TextField("开本（如 32开）", text: $editFormat)
+                            TextField("印张", text: $editPrintedSheets)
+                            TextField("字数（如 200千字）", text: $editWordCount)
+                        }
+
+                        Section("联系方式") {
+                            TextField("电话", text: $editPhone)
+                                .keyboardType(.phonePad)
+                            TextField("地址", text: $editAddress)
+                            TextField("邮编", text: $editPostalCode)
                         }
                     }
                     .navigationTitle("编辑书籍")
@@ -1098,6 +1140,14 @@ struct LibraryBookDetailView: View {
             }
             .sheet(isPresented: $showCoverPicker) {
                 PhotoPickerView(selectedImage: $coverImage)
+                    .ignoresSafeArea()
+            }
+            .sheet(isPresented: $showCoverCamera) {
+                CameraView(capturedImage: $coverImage)
+                    .ignoresSafeArea()
+            }
+            .sheet(isPresented: $showCoverScanner) {
+                DocumentScannerView(scannedImage: $coverImage)
                     .ignoresSafeArea()
             }
             .onChange(of: coverImage) { _, newValue in
@@ -1186,7 +1236,22 @@ struct LibraryBookDetailView: View {
                     editAuthor = detail.author ?? ""
                     editIsbn = detail.isbn ?? ""
                     editPublisher = detail.publisher ?? ""
-                    editPublishDate = detail.publishDate ?? ""
+                    editEdition = detail.edition ?? ""
+                    editAdaptation = detail.adaptation ?? ""
+                    editTranslator = detail.translator ?? ""
+                    editAuthorNationality = detail.authorNationality ?? ""
+                    editPublisherPerson = detail.publisherPerson ?? ""
+                    editResponsibleEditor = detail.responsibleEditor ?? ""
+                    editResponsiblePrinting = detail.responsiblePrinting ?? ""
+                    editCoverDesign = detail.coverDesign ?? ""
+                    editPhone = detail.phone ?? ""
+                    editAddress = detail.address ?? ""
+                    editPostalCode = detail.postalCode ?? ""
+                    editPrintingHouse = detail.printingHouse ?? ""
+                    editImpression = detail.impression ?? ""
+                    editFormat = detail.format ?? ""
+                    editPrintedSheets = detail.printedSheets ?? ""
+                    editWordCount = detail.wordCount ?? ""
                     editPrice = detail.price ?? ""
                     showEdit = true
                 } label: {
@@ -1217,8 +1282,16 @@ struct LibraryBookDetailView: View {
                     ProgressView("上传中…")
                 } else {
                     HStack(spacing: 16) {
-                        Button {
-                            showCoverPicker = true
+                        Menu {
+                            Button("拍照", systemImage: "camera") {
+                                showCoverCamera = true
+                            }
+                            Button("从相册选取", systemImage: "photo") {
+                                showCoverPicker = true
+                            }
+                            Button("扫描文档", systemImage: "doc.text.viewfinder") {
+                                showCoverScanner = true
+                            }
                         } label: {
                             Label(detail.coverUrl == nil ? "添加封面" : "更换封面",
                                   systemImage: "photo.badge.plus")
@@ -1243,23 +1316,38 @@ struct LibraryBookDetailView: View {
 
         Section {
             LabeledContent("书名", value: detail.title)
-            if let author = detail.author, !author.isEmpty {
-                LabeledContent("作者", value: author)
-            }
-            if let isbn = detail.isbn, !isbn.isEmpty {
-                LabeledContent("ISBN", value: isbn)
-            }
-            if let publisher = detail.publisher, !publisher.isEmpty {
-                LabeledContent("出版社", value: publisher)
-            }
-            if let pd = detail.publishDate, !pd.isEmpty {
-                LabeledContent("出版时间", value: pd)
-            }
-            if let p = detail.price, !p.isEmpty {
-                LabeledContent("定价", value: "¥\(p)")
-            }
+            if let v = detail.author, !v.isEmpty { LabeledContent("作者", value: v) }
+            if let v = detail.adaptation, !v.isEmpty { LabeledContent("改编", value: v) }
+            if let v = detail.translator, !v.isEmpty { LabeledContent("译者", value: v) }
+            if let v = detail.authorNationality, !v.isEmpty { LabeledContent("作者国籍", value: v) }
+            if let v = detail.isbn, !v.isEmpty { LabeledContent("ISBN", value: v) }
+            if let v = detail.publisher, !v.isEmpty { LabeledContent("出版社", value: v) }
+            if let v = detail.edition, !v.isEmpty { LabeledContent("版次", value: v) }
+            if let v = detail.publisherPerson, !v.isEmpty { LabeledContent("出版人", value: v) }
+            if let v = detail.responsibleEditor, !v.isEmpty { LabeledContent("责任编辑", value: v) }
+            if let v = detail.responsiblePrinting, !v.isEmpty { LabeledContent("责任印制", value: v) }
+            if let v = detail.coverDesign, !v.isEmpty { LabeledContent("封面设计", value: v) }
+            if let v = detail.price, !v.isEmpty { LabeledContent("定价", value: "¥\(v)") }
         } header: {
             Text("基本信息")
+        }
+
+        Section {
+            if let v = detail.printingHouse, !v.isEmpty { LabeledContent("印刷", value: v) }
+            if let v = detail.impression, !v.isEmpty { LabeledContent("印次", value: v) }
+            if let v = detail.format, !v.isEmpty { LabeledContent("开本", value: v) }
+            if let v = detail.printedSheets, !v.isEmpty { LabeledContent("印张", value: v) }
+            if let v = detail.wordCount, !v.isEmpty { LabeledContent("字数", value: v) }
+        } header: {
+            Text("出版信息")
+        }
+
+        Section {
+            if let v = detail.phone, !v.isEmpty { LabeledContent("电话", value: v) }
+            if let v = detail.address, !v.isEmpty { LabeledContent("地址", value: v) }
+            if let v = detail.postalCode, !v.isEmpty { LabeledContent("邮编", value: v) }
+        } header: {
+            Text("联系方式")
         } footer: {
             Button {
                 detailImage = nil
@@ -1373,7 +1461,22 @@ struct LibraryBookDetailView: View {
                     author: editAuthor.isEmpty ? nil : editAuthor,
                     isbn: editIsbn.isEmpty ? nil : editIsbn,
                     publisher: editPublisher.isEmpty ? nil : editPublisher,
-                    publishDate: editPublishDate.isEmpty ? nil : editPublishDate,
+                    edition: editEdition.isEmpty ? nil : editEdition,
+                    adaptation: editAdaptation.isEmpty ? nil : editAdaptation,
+                    translator: editTranslator.isEmpty ? nil : editTranslator,
+                    authorNationality: editAuthorNationality.isEmpty ? nil : editAuthorNationality,
+                    publisherPerson: editPublisherPerson.isEmpty ? nil : editPublisherPerson,
+                    responsibleEditor: editResponsibleEditor.isEmpty ? nil : editResponsibleEditor,
+                    responsiblePrinting: editResponsiblePrinting.isEmpty ? nil : editResponsiblePrinting,
+                    coverDesign: editCoverDesign.isEmpty ? nil : editCoverDesign,
+                    phone: editPhone.isEmpty ? nil : editPhone,
+                    address: editAddress.isEmpty ? nil : editAddress,
+                    postalCode: editPostalCode.isEmpty ? nil : editPostalCode,
+                    printingHouse: editPrintingHouse.isEmpty ? nil : editPrintingHouse,
+                    impression: editImpression.isEmpty ? nil : editImpression,
+                    format: editFormat.isEmpty ? nil : editFormat,
+                    printedSheets: editPrintedSheets.isEmpty ? nil : editPrintedSheets,
+                    wordCount: editWordCount.isEmpty ? nil : editWordCount,
                     price: editPrice.isEmpty ? nil : editPrice,
                     coverUrl: detail?.coverUrl,
                     categoryId: detail?.categoryId,
@@ -1450,12 +1553,30 @@ struct LibraryBookDetailView: View {
                     if let p = e.price { return String(p) }
                     return current.price
                 }()
+                let orDefault = { (extracted: String?, current: String?) -> String? in
+                    (extracted?.isEmpty == false) ? extracted : current
+                }
                 let request = NewBookRequest(
                     title: (e.title?.isEmpty == false && e.title != "无法辨认") ? e.title! : current.title,
                     author: (e.author?.isEmpty == false) ? e.author : current.author,
                     isbn: (e.isbn?.isEmpty == false) ? e.isbn : current.isbn,
                     publisher: (e.publisher?.isEmpty == false) ? e.publisher : current.publisher,
-                    publishDate: (e.publishDate?.isEmpty == false) ? e.publishDate : current.publishDate,
+                    edition: orDefault(e.edition, current.edition),
+                    adaptation: orDefault(e.adaptation, current.adaptation),
+                    translator: orDefault(e.translator, current.translator),
+                    authorNationality: orDefault(e.authorNationality, current.authorNationality),
+                    publisherPerson: orDefault(e.publisherPerson, current.publisherPerson),
+                    responsibleEditor: orDefault(e.responsibleEditor, current.responsibleEditor),
+                    responsiblePrinting: orDefault(e.responsiblePrinting, current.responsiblePrinting),
+                    coverDesign: orDefault(e.coverDesign, current.coverDesign),
+                    phone: orDefault(e.phone, current.phone),
+                    address: orDefault(e.address, current.address),
+                    postalCode: orDefault(e.postalCode, current.postalCode),
+                    printingHouse: orDefault(e.printingHouse, current.printingHouse),
+                    impression: orDefault(e.impression, current.impression),
+                    format: orDefault(e.format, current.format),
+                    printedSheets: orDefault(e.printedSheets, current.printedSheets),
+                    wordCount: orDefault(e.wordCount, current.wordCount),
                     price: priceStr,
                     coverUrl: current.coverUrl,
                     categoryId: current.categoryId,
@@ -1481,7 +1602,22 @@ struct LibraryBookDetailView: View {
                     author: current.author,
                     isbn: current.isbn,
                     publisher: current.publisher,
-                    publishDate: current.publishDate,
+                    edition: current.edition,
+                    adaptation: current.adaptation,
+                    translator: current.translator,
+                    authorNationality: current.authorNationality,
+                    publisherPerson: current.publisherPerson,
+                    responsibleEditor: current.responsibleEditor,
+                    responsiblePrinting: current.responsiblePrinting,
+                    coverDesign: current.coverDesign,
+                    phone: current.phone,
+                    address: current.address,
+                    postalCode: current.postalCode,
+                    printingHouse: current.printingHouse,
+                    impression: current.impression,
+                    format: current.format,
+                    printedSheets: current.printedSheets,
+                    wordCount: current.wordCount,
                     price: current.price,
                     coverUrl: current.coverUrl,
                     categoryId: current.categoryId,
@@ -1509,9 +1645,24 @@ struct ExtractedDetailsPreviewView: View {
             Section {
                 row("书名", extracted.title)
                 row("作者", extracted.author)
+                row("改编", extracted.adaptation)
+                row("译者", extracted.translator)
+                row("作者国籍", extracted.authorNationality)
                 row("ISBN", extracted.isbn)
                 row("出版社", extracted.publisher)
-                row("出版时间", extracted.publishDate)
+                row("版次", extracted.edition)
+                row("出版人", extracted.publisherPerson)
+                row("责任编辑", extracted.responsibleEditor)
+                row("责任印制", extracted.responsiblePrinting)
+                row("封面设计", extracted.coverDesign)
+                row("电话", extracted.phone)
+                row("地址", extracted.address)
+                row("邮编", extracted.postalCode)
+                row("印刷", extracted.printingHouse)
+                row("印次", extracted.impression)
+                row("开本", extracted.format)
+                row("印张", extracted.printedSheets)
+                row("字数", extracted.wordCount)
                 if let p = extracted.price {
                     LabeledContent("定价") {
                         Text(String(format: "¥%.2f", p))
@@ -1544,7 +1695,12 @@ struct ExtractedDetailsPreviewView: View {
     }
 
     private var hasAnyValue: Bool {
-        [extracted.title, extracted.author, extracted.isbn, extracted.publisher, extracted.publishDate]
+        [extracted.title, extracted.author, extracted.isbn, extracted.publisher, extracted.edition,
+         extracted.adaptation, extracted.translator, extracted.authorNationality,
+         extracted.publisherPerson, extracted.responsibleEditor, extracted.responsiblePrinting,
+         extracted.coverDesign, extracted.phone, extracted.address, extracted.postalCode,
+         extracted.printingHouse, extracted.impression, extracted.format,
+         extracted.printedSheets, extracted.wordCount]
             .contains { ($0?.isEmpty == false) && $0 != "无法辨认" }
         || extracted.price != nil
     }

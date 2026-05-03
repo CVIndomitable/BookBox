@@ -165,6 +165,7 @@ struct RoomDetailView: View {
             let rs = try await rooms
             isDefault = rs.first(where: { $0.id == roomId })?.isDefault ?? false
         } catch {
+            if (error as? URLError)?.code == .cancelled { return }
             errorMessage = error.chineseDescription
         }
         isLoading = false

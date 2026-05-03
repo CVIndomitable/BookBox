@@ -178,6 +178,7 @@ final class NetworkService: ObservableObject {
                 lastError = nil
                 break
             } catch {
+                if (error as? URLError)?.code == .cancelled { throw error }
                 lastError = error
                 #if DEBUG
                 print("[NET] 请求失败 (第\(attempt)次): \(error)")

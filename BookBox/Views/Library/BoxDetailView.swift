@@ -272,6 +272,7 @@ struct BoxDetailView: View {
         do {
             detail = try await NetworkService.shared.fetchBox(id: box.id)
         } catch {
+            if (error as? URLError)?.code == .cancelled { return }
             errorMessage = error.chineseDescription
             detail = box
         }
