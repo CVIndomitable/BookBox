@@ -55,9 +55,24 @@ struct BookDetailsScanView: View {
                 Section("识别到的详情") {
                     row("书名", ex.title)
                     row("作者", ex.author)
+                    row("改编", ex.adaptation)
+                    row("译者", ex.translator)
+                    row("作者国籍", ex.authorNationality)
                     row("ISBN", ex.isbn)
                     row("出版社", ex.publisher)
-                    row("出版时间", ex.publishDate)
+                    row("版次", ex.edition)
+                    row("出版人", ex.publisherPerson)
+                    row("责任编辑", ex.responsibleEditor)
+                    row("责任印制", ex.responsiblePrinting)
+                    row("封面设计", ex.coverDesign)
+                    row("电话", ex.phone)
+                    row("地址", ex.address)
+                    row("邮编", ex.postalCode)
+                    row("印刷", ex.printingHouse)
+                    row("印次", ex.impression)
+                    row("开本", ex.format)
+                    row("印张", ex.printedSheets)
+                    row("字数", ex.wordCount)
                     if let p = ex.price {
                         LabeledContent("定价") {
                             Text(String(format: "¥%.2f", p))
@@ -240,12 +255,30 @@ struct BookDetailsScanView: View {
                     if let p = e.price { return String(p) }
                     return current.price
                 }()
+                let orDefault = { (ex: String?, cur: String?) -> String? in
+                    (ex?.isEmpty == false) ? ex : cur
+                }
                 let request = NewBookRequest(
                     title: (e.title?.isEmpty == false && e.title != "无法辨认") ? e.title! : current.title,
                     author: (e.author?.isEmpty == false) ? e.author : current.author,
                     isbn: (e.isbn?.isEmpty == false) ? e.isbn : current.isbn,
                     publisher: (e.publisher?.isEmpty == false) ? e.publisher : current.publisher,
-                    publishDate: (e.publishDate?.isEmpty == false) ? e.publishDate : current.publishDate,
+                    edition: orDefault(e.edition, current.edition),
+                    adaptation: orDefault(e.adaptation, current.adaptation),
+                    translator: orDefault(e.translator, current.translator),
+                    authorNationality: orDefault(e.authorNationality, current.authorNationality),
+                    publisherPerson: orDefault(e.publisherPerson, current.publisherPerson),
+                    responsibleEditor: orDefault(e.responsibleEditor, current.responsibleEditor),
+                    responsiblePrinting: orDefault(e.responsiblePrinting, current.responsiblePrinting),
+                    coverDesign: orDefault(e.coverDesign, current.coverDesign),
+                    phone: orDefault(e.phone, current.phone),
+                    address: orDefault(e.address, current.address),
+                    postalCode: orDefault(e.postalCode, current.postalCode),
+                    printingHouse: orDefault(e.printingHouse, current.printingHouse),
+                    impression: orDefault(e.impression, current.impression),
+                    format: orDefault(e.format, current.format),
+                    printedSheets: orDefault(e.printedSheets, current.printedSheets),
+                    wordCount: orDefault(e.wordCount, current.wordCount),
                     price: priceStr,
                     coverUrl: current.coverUrl,
                     categoryId: current.categoryId,

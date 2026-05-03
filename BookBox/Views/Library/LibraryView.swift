@@ -1267,13 +1267,18 @@ struct LibraryBookDetailView: View {
         Section {
             VStack(spacing: 12) {
                 if let url = detail.coverDisplayUrl {
-                    AsyncImage(url: url) { image in
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(maxHeight: 200)
-                    } placeholder: {
-                        ProgressView()
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(maxHeight: 200)
+                        case .failure:
+                            coverPlaceholder
+                        default:
+                            ProgressView()
+                        }
                     }
                     .frame(maxWidth: .infinity)
                 }

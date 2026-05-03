@@ -67,9 +67,9 @@ const upload = multer({
   },
 });
 
-router.post('/:bookId', checkBookAccess('member'), upload.single('cover'), async (req, res, next) => {
+router.post('/:id', checkBookAccess('member'), upload.single('cover'), async (req, res, next) => {
   try {
-    const bookId = parseId(req.params.bookId, '书籍 ID');
+    const bookId = parseId(req.params.id, '书籍 ID');
 
     if (!req.file) {
       return res.status(400).json({ error: '未上传文件' });
@@ -103,9 +103,9 @@ router.post('/:bookId', checkBookAccess('member'), upload.single('cover'), async
   }
 });
 
-router.delete('/:bookId', checkBookAccess('member'), async (req, res, next) => {
+router.delete('/:id', checkBookAccess('member'), async (req, res, next) => {
   try {
-    const bookId = parseId(req.params.bookId, '书籍 ID');
+    const bookId = parseId(req.params.id, '书籍 ID');
 
     const book = await prisma.book.findUnique({
       where: { id: bookId },

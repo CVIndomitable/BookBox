@@ -41,7 +41,22 @@ struct Book: Identifiable, Codable, Hashable {
     var author: String?
     var isbn: String?
     var publisher: String?
-    var publishDate: String?
+    var edition: String?                                    // 版次
+    var adaptation: String?                                 // 改编
+    var translator: String?                                 // 译者
+    var authorNationality: String?                          // 作者国籍
+    var publisherPerson: String?                            // 出版人
+    var responsibleEditor: String?                          // 责任编辑
+    var responsiblePrinting: String?                        // 责任印制
+    var coverDesign: String?                                // 封面设计
+    var phone: String?                                      // 电话
+    var address: String?                                    // 地址
+    var postalCode: String?                                 // 邮编
+    var printingHouse: String?                              // 印刷
+    var impression: String?                                 // 印次
+    var format: String?                                     // 开本
+    var printedSheets: String?                              // 印张
+    var wordCount: String?                                  // 字数
     // 定价：Prisma Decimal 序列化后是字符串（如 "29.80"），直接按 String 解码避免精度问题
     var price: String?
     var coverUrl: String?
@@ -103,7 +118,22 @@ struct NewBookRequest: Codable {
     var author: String?
     var isbn: String?
     var publisher: String?
-    var publishDate: String?
+    var edition: String?                                    // 版次
+    var adaptation: String?                                 // 改编
+    var translator: String?                                 // 译者
+    var authorNationality: String?                          // 作者国籍
+    var publisherPerson: String?                            // 出版人
+    var responsibleEditor: String?                          // 责任编辑
+    var responsiblePrinting: String?                        // 责任印制
+    var coverDesign: String?                                // 封面设计
+    var phone: String?                                      // 电话
+    var address: String?                                    // 地址
+    var postalCode: String?                                 // 邮编
+    var printingHouse: String?                              // 印刷
+    var impression: String?                                 // 印次
+    var format: String?                                     // 开本
+    var printedSheets: String?                              // 印张
+    var wordCount: String?                                  // 字数
     // 发给服务器时也用字符串，服务端会解析 "29.8"/"¥29.8"/"29.80元" 等形式
     var price: String?
     var coverUrl: String?
@@ -128,8 +158,23 @@ struct ExtractedBookDetails: Codable {
     var author: String?
     var isbn: String?
     var publisher: String?
-    var publishDate: String?
+    var edition: String?
     var price: Double?
+    var adaptation: String?
+    var translator: String?
+    var authorNationality: String?
+    var publisherPerson: String?
+    var responsibleEditor: String?
+    var responsiblePrinting: String?
+    var coverDesign: String?
+    var phone: String?
+    var address: String?
+    var postalCode: String?
+    var printingHouse: String?
+    var impression: String?
+    var format: String?
+    var printedSheets: String?
+    var wordCount: String?
 }
 
 /// 移动书籍请求

@@ -450,7 +450,7 @@ router.post('/recognize-compare', async (req, res, next) => {
 // 并尝试关联到库内已存在的那本书。
 // 请求体：{ image: base64, libraryId?: number }
 // 响应：{
-//   extracted: { title, author, isbn, publisher, publishDate, price },
+//   extracted: { title, author, isbn, publisher, edition, price, ... },
 //   match: Book | null,              // 直接命中的唯一那本（优先 ISBN）
 //   matchReason: 'isbn'|'title+author'|'title' | null,
 //   candidates: Book[],              // 有多本疑似时列出来给用户挑
@@ -485,12 +485,27 @@ router.post('/extract-book-details', async (req, res, next) => {
 - author: 作者
 - isbn: ISBN 号（10 位或 13 位数字，去除所有连字符和空格）
 - publisher: 出版社
-- publishDate: 出版时间（原样保留，可以是 "2023-05"/"2023年5月"/"1999" 等任意格式）
+- edition: 版次（原出版时间，如 "2023-05"/"2023年5月第1版"/"1999" 等，原样保留）
 - price: 定价（只返回数字，如 29.8，不要带货币符号和"元"字）
+- adaptation: 改编者
+- translator: 译者
+- authorNationality: 作者国籍
+- publisherPerson: 出版人
+- responsibleEditor: 责任编辑
+- responsiblePrinting: 责任印制
+- coverDesign: 封面设计
+- phone: 电话（出版社或发行电话）
+- address: 地址（出版社地址）
+- postalCode: 邮编
+- printingHouse: 印刷厂
+- impression: 印次（如 "2023年5月第2次印刷"）
+- format: 开本（如 "32开"）
+- printedSheets: 印张（如 "12.5"）
+- wordCount: 字数（如 "200千字"）
 
 只返回一个 JSON 对象，不要数组、不要 markdown、不要解释。看不到的字段写 null，不要编造。
 
-示例：{"title":"活着","author":"余华","isbn":"9787506365437","publisher":"作家出版社","publishDate":"2012-08","price":20.00}`;
+示例：{"title":"活着","author":"余华","isbn":"9787506365437","publisher":"作家出版社","edition":"2012-08","price":20.00}`;
 
     // validate 校验：顶级模型返回拒答文本（"I can't analyze images"）时，
     // 解析失败会让 Pool 换下一家，而不是路由层抛 502。
@@ -523,14 +538,29 @@ router.post('/extract-book-details', async (req, res, next) => {
     const rawIsbn = norm(extracted.isbn);
     const isbn = rawIsbn ? rawIsbn.replace(/[-\s]/g, '') : null;
     const publisher = norm(extracted.publisher);
-    const publishDate = norm(extracted.publishDate);
+    const edition = norm(extracted.edition);
     let price = null;
     if (extracted.price !== null && extracted.price !== undefined && extracted.price !== '') {
       const n = Number(String(extracted.price).replace(/[¥\$,\s元RMB]/gi, ''));
       if (Number.isFinite(n) && n >= 0) price = n;
     }
+    const adaptation = norm(extracted.adaptation);
+    const translator = norm(extracted.translator);
+    const authorNationality = norm(extracted.authorNationality);
+    const publisherPerson = norm(extracted.publisherPerson);
+    const responsibleEditor = norm(extracted.responsibleEditor);
+    const responsiblePrinting = norm(extracted.responsiblePrinting);
+    const coverDesign = norm(extracted.coverDesign);
+    const phone = norm(extracted.phone);
+    const address = norm(extracted.address);
+    const postalCode = norm(extracted.postalCode);
+    const printingHouse = norm(extracted.printingHouse);
+    const impression = norm(extracted.impression);
+    const format_ = norm(extracted.format);
+    const printedSheets = norm(extracted.printedSheets);
+    const wordCount = norm(extracted.wordCount);
 
-    const cleanedExtracted = { title, author, isbn, publisher, publishDate, price };
+    const cleanedExtracted = { title, author, isbn, publisher, edition, price, adaptation, translator, authorNationality, publisherPerson, responsibleEditor, responsiblePrinting, coverDesign, phone, address, postalCode, printingHouse, impression, format: format_, printedSheets, wordCount };
 
     let match = null;
     let matchReason = null;

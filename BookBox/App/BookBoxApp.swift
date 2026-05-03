@@ -12,7 +12,6 @@ struct BookBoxApp: App {
                         .overlay(alignment: .top) {
                             SupplierDegradationBanner()
                         }
-                        .withVoiceAssistant()
                 } else {
                     LoginView()
                 }
