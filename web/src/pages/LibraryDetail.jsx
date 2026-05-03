@@ -19,10 +19,16 @@ export default function LibraryDetail() {
   const [newMemberUsername, setNewMemberUsername] = useState('');
   const [newMemberRole, setNewMemberRole] = useState('member');
   const [showAddBook, setShowAddBook] = useState(false);
-  const [newBookTitle, setNewBookTitle] = useState('');
-  const [newBookAuthor, setNewBookAuthor] = useState('');
-  const [newBookPublisher, setNewBookPublisher] = useState('');
-  const [newBookIsbn, setNewBookIsbn] = useState('');
+  const [showEditBook, setShowEditBook] = useState(null); // book object or null
+  const emptyBook = {
+    title: '', author: '', adaptation: '', translator: '', authorNationality: '',
+    isbn: '', publisher: '', edition: '', publisherPerson: '',
+    responsibleEditor: '', responsiblePrinting: '', coverDesign: '',
+    phone: '', address: '', postalCode: '', printingHouse: '',
+    impression: '', format: '', printedSheets: '', wordCount: '', price: '',
+  };
+  const [newBook, setNewBook] = useState({ ...emptyBook });
+  const [editBook, setEditBook] = useState({ ...emptyBook });
 
   useEffect(() => {
     loadLibrary();
@@ -104,24 +110,67 @@ export default function LibraryDetail() {
 
   const handleAddBook = async (e) => {
     e.preventDefault();
-    if (!newBookTitle.trim()) return;
+    if (!newBook.title.trim()) return;
     try {
-      await books.create({
-        libraryId: parseInt(id),
-        title: newBookTitle.trim(),
-        author: newBookAuthor.trim() || undefined,
-        publisher: newBookPublisher.trim() || undefined,
-        isbn: newBookIsbn.trim() || undefined,
-        verifyStatus: 'manual',
-      });
+      const payload = { libraryId: parseInt(id), verifyStatus: 'manual' };
+      for (const [k, v] of Object.entries(newBook)) {
+        if (v.trim()) payload[k] = v.trim();
+      }
+      await books.create(payload);
       setShowAddBook(false);
-      setNewBookTitle('');
-      setNewBookAuthor('');
-      setNewBookPublisher('');
-      setNewBookIsbn('');
+      setNewBook({ ...emptyBook });
       loadBooks();
     } catch (err) {
       alert(err.error || '添加失败');
+    }
+  };
+
+  const handleEditBookClick = async (book) => {
+    try {
+      const detail = await books.get(book.id);
+      setEditBook({
+        title: detail.title || '',
+        author: detail.author || '',
+        adaptation: detail.adaptation || '',
+        translator: detail.translator || '',
+        authorNationality: detail.authorNationality || '',
+        isbn: detail.isbn || '',
+        publisher: detail.publisher || '',
+        edition: detail.edition || '',
+        publisherPerson: detail.publisherPerson || '',
+        responsibleEditor: detail.responsibleEditor || '',
+        responsiblePrinting: detail.responsiblePrinting || '',
+        coverDesign: detail.coverDesign || '',
+        phone: detail.phone || '',
+        address: detail.address || '',
+        postalCode: detail.postalCode || '',
+        printingHouse: detail.printingHouse || '',
+        impression: detail.impression || '',
+        format: detail.format || '',
+        printedSheets: detail.printedSheets || '',
+        wordCount: detail.wordCount || '',
+        price: detail.price || '',
+      });
+      setShowEditBook(book.id);
+    } catch (err) {
+      alert(err.error || '加载书籍详情失败');
+    }
+  };
+
+  const handleSaveEdit = async (e) => {
+    e.preventDefault();
+    if (!editBook.title.trim()) return;
+    try {
+      const payload = {};
+      for (const [k, v] of Object.entries(editBook)) {
+        if (v.trim()) payload[k] = v.trim();
+        else payload[k] = null;
+      }
+      await books.update(showEditBook, payload);
+      setShowEditBook(null);
+      loadBooks();
+    } catch (err) {
+      alert(err.error || '保存失败');
     }
   };
 
@@ -190,32 +239,39 @@ export default function LibraryDetail() {
             </div>
 
             {showAddBook && (
-              <form className="add-book-form" onSubmit={handleAddBook}>
-                <input
-                  type="text"
-                  placeholder="书名（必填）"
-                  value={newBookTitle}
-                  onChange={(e) => setNewBookTitle(e.target.value)}
-                  required
-                />
-                <input
-                  type="text"
-                  placeholder="作者"
-                  value={newBookAuthor}
-                  onChange={(e) => setNewBookAuthor(e.target.value)}
-                />
-                <input
-                  type="text"
-                  placeholder="出版社"
-                  value={newBookPublisher}
-                  onChange={(e) => setNewBookPublisher(e.target.value)}
-                />
-                <input
-                  type="text"
-                  placeholder="ISBN"
-                  value={newBookIsbn}
-                  onChange={(e) => setNewBookIsbn(e.target.value)}
-                />
+              <form className="book-form" onSubmit={handleAddBook}>
+                <div className="book-form-sections">
+                  <div className="form-section">
+                    <h4>基本信息</h4>
+                    <input type="text" placeholder="书名（必填）" value={newBook.title} onChange={(e) => setNewBook({...newBook, title: e.target.value})} required />
+                    <input type="text" placeholder="作者" value={newBook.author} onChange={(e) => setNewBook({...newBook, author: e.target.value})} />
+                    <input type="text" placeholder="改编" value={newBook.adaptation} onChange={(e) => setNewBook({...newBook, adaptation: e.target.value})} />
+                    <input type="text" placeholder="译者" value={newBook.translator} onChange={(e) => setNewBook({...newBook, translator: e.target.value})} />
+                    <input type="text" placeholder="作者国籍" value={newBook.authorNationality} onChange={(e) => setNewBook({...newBook, authorNationality: e.target.value})} />
+                    <input type="text" placeholder="ISBN" value={newBook.isbn} onChange={(e) => setNewBook({...newBook, isbn: e.target.value})} />
+                    <input type="text" placeholder="出版社" value={newBook.publisher} onChange={(e) => setNewBook({...newBook, publisher: e.target.value})} />
+                    <input type="text" placeholder="版次（如 2023年5月第1版）" value={newBook.edition} onChange={(e) => setNewBook({...newBook, edition: e.target.value})} />
+                    <input type="text" placeholder="出版人" value={newBook.publisherPerson} onChange={(e) => setNewBook({...newBook, publisherPerson: e.target.value})} />
+                    <input type="text" placeholder="责任编辑" value={newBook.responsibleEditor} onChange={(e) => setNewBook({...newBook, responsibleEditor: e.target.value})} />
+                    <input type="text" placeholder="责任印制" value={newBook.responsiblePrinting} onChange={(e) => setNewBook({...newBook, responsiblePrinting: e.target.value})} />
+                    <input type="text" placeholder="封面设计" value={newBook.coverDesign} onChange={(e) => setNewBook({...newBook, coverDesign: e.target.value})} />
+                    <input type="text" placeholder="定价（元）" value={newBook.price} onChange={(e) => setNewBook({...newBook, price: e.target.value})} />
+                  </div>
+                  <div className="form-section">
+                    <h4>出版信息</h4>
+                    <input type="text" placeholder="印刷厂" value={newBook.printingHouse} onChange={(e) => setNewBook({...newBook, printingHouse: e.target.value})} />
+                    <input type="text" placeholder="印次（如 2023年5月第2次印刷）" value={newBook.impression} onChange={(e) => setNewBook({...newBook, impression: e.target.value})} />
+                    <input type="text" placeholder="开本（如 32开）" value={newBook.format} onChange={(e) => setNewBook({...newBook, format: e.target.value})} />
+                    <input type="text" placeholder="印张" value={newBook.printedSheets} onChange={(e) => setNewBook({...newBook, printedSheets: e.target.value})} />
+                    <input type="text" placeholder="字数（如 200千字）" value={newBook.wordCount} onChange={(e) => setNewBook({...newBook, wordCount: e.target.value})} />
+                  </div>
+                  <div className="form-section">
+                    <h4>联系方式</h4>
+                    <input type="text" placeholder="电话" value={newBook.phone} onChange={(e) => setNewBook({...newBook, phone: e.target.value})} />
+                    <input type="text" placeholder="地址" value={newBook.address} onChange={(e) => setNewBook({...newBook, address: e.target.value})} />
+                    <input type="text" placeholder="邮编" value={newBook.postalCode} onChange={(e) => setNewBook({...newBook, postalCode: e.target.value})} />
+                  </div>
+                </div>
                 <div className="form-actions">
                   <button type="submit" className="btn-primary">保存</button>
                   <button type="button" className="btn-secondary" onClick={() => setShowAddBook(false)}>取消</button>
@@ -238,14 +294,14 @@ export default function LibraryDetail() {
                         {book.locationType === 'none' && '未放置'}
                       </p>
                     </div>
-                    {canManage && (
-                      <button
-                        onClick={() => handleDeleteBook(book.id)}
-                        className="btn-danger-small"
-                      >
-                        删除
-                      </button>
-                    )}
+                    <div className="book-actions">
+                      {canManage && (
+                        <button onClick={() => handleEditBookClick(book)} className="btn-secondary-small">编辑</button>
+                      )}
+                      {canManage && (
+                        <button onClick={() => handleDeleteBook(book.id)} className="btn-danger-small">删除</button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -344,6 +400,52 @@ export default function LibraryDetail() {
                   取消
                 </button>
                 <button type="submit" className="btn-primary">添加</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showEditBook && (
+        <div className="modal" onClick={() => setShowEditBook(null)}>
+          <div className="modal-content modal-wide" onClick={(e) => e.stopPropagation()}>
+            <h2>编辑书籍</h2>
+            <form className="book-form" onSubmit={handleSaveEdit}>
+              <div className="book-form-sections">
+                <div className="form-section">
+                  <h4>基本信息</h4>
+                  <input type="text" placeholder="书名（必填）" value={editBook.title} onChange={(e) => setEditBook({...editBook, title: e.target.value})} required />
+                  <input type="text" placeholder="作者" value={editBook.author} onChange={(e) => setEditBook({...editBook, author: e.target.value})} />
+                  <input type="text" placeholder="改编" value={editBook.adaptation} onChange={(e) => setEditBook({...editBook, adaptation: e.target.value})} />
+                  <input type="text" placeholder="译者" value={editBook.translator} onChange={(e) => setEditBook({...editBook, translator: e.target.value})} />
+                  <input type="text" placeholder="作者国籍" value={editBook.authorNationality} onChange={(e) => setEditBook({...editBook, authorNationality: e.target.value})} />
+                  <input type="text" placeholder="ISBN" value={editBook.isbn} onChange={(e) => setEditBook({...editBook, isbn: e.target.value})} />
+                  <input type="text" placeholder="出版社" value={editBook.publisher} onChange={(e) => setEditBook({...editBook, publisher: e.target.value})} />
+                  <input type="text" placeholder="版次（如 2023年5月第1版）" value={editBook.edition} onChange={(e) => setEditBook({...editBook, edition: e.target.value})} />
+                  <input type="text" placeholder="出版人" value={editBook.publisherPerson} onChange={(e) => setEditBook({...editBook, publisherPerson: e.target.value})} />
+                  <input type="text" placeholder="责任编辑" value={editBook.responsibleEditor} onChange={(e) => setEditBook({...editBook, responsibleEditor: e.target.value})} />
+                  <input type="text" placeholder="责任印制" value={editBook.responsiblePrinting} onChange={(e) => setEditBook({...editBook, responsiblePrinting: e.target.value})} />
+                  <input type="text" placeholder="封面设计" value={editBook.coverDesign} onChange={(e) => setEditBook({...editBook, coverDesign: e.target.value})} />
+                  <input type="text" placeholder="定价（元）" value={editBook.price} onChange={(e) => setEditBook({...editBook, price: e.target.value})} />
+                </div>
+                <div className="form-section">
+                  <h4>出版信息</h4>
+                  <input type="text" placeholder="印刷厂" value={editBook.printingHouse} onChange={(e) => setEditBook({...editBook, printingHouse: e.target.value})} />
+                  <input type="text" placeholder="印次（如 2023年5月第2次印刷）" value={editBook.impression} onChange={(e) => setEditBook({...editBook, impression: e.target.value})} />
+                  <input type="text" placeholder="开本（如 32开）" value={editBook.format} onChange={(e) => setEditBook({...editBook, format: e.target.value})} />
+                  <input type="text" placeholder="印张" value={editBook.printedSheets} onChange={(e) => setEditBook({...editBook, printedSheets: e.target.value})} />
+                  <input type="text" placeholder="字数（如 200千字）" value={editBook.wordCount} onChange={(e) => setEditBook({...editBook, wordCount: e.target.value})} />
+                </div>
+                <div className="form-section">
+                  <h4>联系方式</h4>
+                  <input type="text" placeholder="电话" value={editBook.phone} onChange={(e) => setEditBook({...editBook, phone: e.target.value})} />
+                  <input type="text" placeholder="地址" value={editBook.address} onChange={(e) => setEditBook({...editBook, address: e.target.value})} />
+                  <input type="text" placeholder="邮编" value={editBook.postalCode} onChange={(e) => setEditBook({...editBook, postalCode: e.target.value})} />
+                </div>
+              </div>
+              <div className="modal-actions">
+                <button type="button" onClick={() => setShowEditBook(null)} className="btn-secondary">取消</button>
+                <button type="submit" className="btn-primary">保存</button>
               </div>
             </form>
           </div>

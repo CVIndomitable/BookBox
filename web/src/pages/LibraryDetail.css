@@ -203,6 +203,68 @@
   background: #d32f2f;
 }
 
+.btn-secondary-small {
+  background: #e0e0e0;
+  color: #333;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+
+.btn-secondary-small:hover {
+  background: #ccc;
+}
+
+.book-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.book-form .book-form-sections {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.book-form .form-section h4 {
+  font-size: 14px;
+  color: #667eea;
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #eee;
+}
+
+.book-form input {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  box-sizing: border-box;
+  margin-bottom: 10px;
+}
+
+.book-form input:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.modal-wide {
+  max-width: 900px !important;
+  width: 90%;
+}
+
+@media (max-width: 768px) {
+  .book-form .book-form-sections {
+    grid-template-columns: 1fr;
+  }
+}
+
 .modal select {
   width: 100%;
   padding: 10px;

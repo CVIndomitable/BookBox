@@ -2,26 +2,23 @@ import Foundation
 import SwiftUI
 
 /// 助手交互模式
-/// - off：完全关闭，没有悬浮按钮、没有助手 Tab
-/// - voice：右下角悬浮麦克风（原行为）
-/// - text：底部多一个"助手"Tab，键盘输入，不显示悬浮按钮
+/// - off：完全关闭，没有助手 Tab
+/// - on：显示助手 Tab，支持文字和语音输入/输出
 enum AssistantMode: String, CaseIterable, Identifiable {
     case off
-    case voice
-    case text
+    case on
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
         case .off: "关闭"
-        case .voice: "语音悬浮"
-        case .text: "文字输入"
+        case .on: "开启"
         }
     }
 }
 
-/// 助手执行引擎 — 被悬浮麦克风按钮和"助手"文字 Tab 共用
+/// 助手执行引擎 — 被助手 Tab 使用
 /// 负责：
 /// 1. 把输入文本发给服务器端 LLM 解析意图（move/query/edit/list）
 /// 2. 执行指令，跨书库查找书籍和目标容器

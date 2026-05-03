@@ -51,8 +51,16 @@ router.get('/overview', async (req, res, next) => {
       });
     } else {
       const allowedLibraryIds = await getAccessibleLibraryIds(req.user.id);
-      containerWhere = { libraryId: { in: allowedLibraryIds } };
-      unlocatedWhere = { libraryId: { in: allowedLibraryIds }, locationType: 'none', deletedAt: null };
+      // 排除系统书库
+      const sysLib = await prisma.library.findFirst({
+        where: { libraryType: 'system' },
+        select: { id: true },
+      });
+      const visibleIds = sysLib
+        ? allowedLibraryIds.filter((id) => id !== sysLib.id)
+        : allowedLibraryIds;
+      containerWhere = { libraryId: { in: visibleIds } };
+      unlocatedWhere = { libraryId: { in: visibleIds }, locationType: 'none', deletedAt: null };
       roomsQuery = Promise.resolve([]);
     }
 

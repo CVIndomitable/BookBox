@@ -32,6 +32,7 @@ model Library {
   location    String?   @db.VarChar(200)
   description String?   @db.Text
   sunDays     Int?      @map("sun_days")  // 书库级别晒书间隔，null 则继承用户全局设置
+  libraryType String    @default("user") @map("library_type") @db.VarChar(20)  // user/system
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
@@ -81,13 +82,28 @@ model Room {
 
 // 书籍表
 model Book {
-  id            Int       @id @default(autoincrement())
-  title         String    @db.VarChar(500)
-  author        String?   @db.VarChar(500)
-  isbn          String?   @db.VarChar(20)
-  publisher     String?   @db.VarChar(200)
-  publishDate   String?   @map("publish_date") @db.VarChar(50)  // 出版时间：来源多样（2023-05/2023年5月/1999），用字符串存原文
-  price         Decimal?  @db.Decimal(10, 2)                    // 定价（元），保留两位小数
+  id                  Int       @id @default(autoincrement())
+  title               String    @db.VarChar(500)
+  author              String?   @db.VarChar(500)
+  isbn                String?   @db.VarChar(20)
+  publisher           String?   @db.VarChar(200)
+  edition             String?   @db.VarChar(50)                             // 版次（原出版时间）：2023-05/2023年5月第1版
+  adaptation          String?   @db.VarChar(500)                            // 改编
+  translator          String?   @db.VarChar(500)                            // 译者
+  authorNationality   String?   @map("author_nationality") @db.VarChar(100) // 作者国籍
+  publisherPerson     String?   @map("publisher_person") @db.VarChar(200)   // 出版人
+  responsibleEditor   String?   @map("responsible_editor") @db.VarChar(200) // 责任编辑
+  responsiblePrinting String?   @map("responsible_printing") @db.VarChar(200) // 责任印制
+  coverDesign         String?   @map("cover_design") @db.VarChar(200)       // 封面设计
+  phone               String?   @db.VarChar(50)                             // 电话
+  address             String?   @db.VarChar(500)                            // 地址
+  postalCode          String?   @map("postal_code") @db.VarChar(20)         // 邮编
+  printingHouse       String?   @map("printing_house") @db.VarChar(200)     // 印刷
+  impression          String?   @db.VarChar(50)                             // 印次
+  format              String?   @db.VarChar(100)                            // 开本
+  printedSheets       String?   @map("printed_sheets") @db.VarChar(50)      // 印张
+  wordCount           String?   @map("word_count") @db.VarChar(50)          // 字数
+  price               Decimal?  @db.Decimal(10, 2)                          // 定价（元），保留两位小数
   coverUrl      String?   @map("cover_url") @db.Text
   categoryId    Int?      @map("category_id")
   verifyStatus  String?   @map("verify_status") @db.VarChar(20)  // matched/uncertain/not_found/manual
@@ -99,6 +115,7 @@ model Book {
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
   deletedAt     DateTime? @map("deleted_at")                       // 回收站：软删时间；null 表示未删；30 天后由清理任务物理删除
+  cacheSourceBookId Int?   @map("cache_source_book_id")             // 指向图书馆缓存来源书籍
 
   category      Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   library       Library?  @relation(fields: [libraryId], references: [id], onDelete: SetNull)
@@ -178,9 +195,10 @@ model BookLog {
 
 // 分类表
 model Category {
-  id       Int    @id @default(autoincrement())
-  name     String @db.VarChar(100)
-  parentId Int?   @map("parent_id")
+  id           Int    @id @default(autoincrement())
+  name         String @db.VarChar(100)
+  parentId     Int?   @map("parent_id")
+  categoryType String @default("user") @map("category_type") @db.VarChar(20)  // user/statutory
 
   parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
   children Category[] @relation("CategoryTree")

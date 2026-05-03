@@ -329,4 +329,71 @@ router.delete('/:id/books/:bookId', checkContainerAccess('shelf', 'member'), asy
   }
 });
 
+// 批量删除书架
+router.post('/batch-delete', checkLibraryAccess('admin'), async (req, res, next) => {
+  try {
+    const { shelfIds } = req.body;
+    if (!Array.isArray(shelfIds) || shelfIds.length === 0) {
+      return res.status(400).json({ error: '请提供书架 ID 列表' });
+    }
+
+    const ids = shelfIds.map((id, i) => parseId(id, `书架 ID[${i}]`));
+    const errors = [];
+    let deleted = 0;
+
+    for (const id of ids) {
+      try {
+        const shelf = await prisma.shelf.findUnique({
+          where: { id },
+          select: { libraryId: true, isDefault: true },
+        });
+        if (!shelf) {
+          errors.push(`书架 ${id} 不存在`);
+          continue;
+        }
+        if (shelf.libraryId !== req.libraryId) {
+          errors.push(`书架 ${id} 不属于当前书库`);
+          continue;
+        }
+
+        await prisma.$transaction(async (tx) => {
+          const books = await tx.book.findMany({
+            where: { locationType: 'shelf', locationId: id, deletedAt: null },
+            select: { id: true },
+          });
+
+          for (const book of books) {
+            await tx.bookLog.create({
+              data: {
+                bookId: book.id,
+                action: 'remove',
+                fromType: 'shelf',
+                fromId: id,
+                toType: 'none',
+                method: 'manual',
+              },
+            });
+          }
+
+          await tx.book.updateMany({
+            where: { locationType: 'shelf', locationId: id },
+            data: { locationType: 'none', locationId: null },
+          });
+
+          await tx.shelf.delete({ where: { id } });
+        }, { isolationLevel: 'Serializable' });
+
+        deleted++;
+      } catch (err) {
+        errors.push(`书架 ${id}: ${err.message}`);
+      }
+    }
+
+    res.json({ deleted, errors });
+  } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
+    next(err);
+  }
+});
+
 export default router;

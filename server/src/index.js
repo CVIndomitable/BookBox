@@ -42,6 +42,9 @@ if (!process.env.SUPPLIER_ENCRYPTION_KEY) {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// 信任 nginx 反向代理
+app.set('trust proxy', 1);
+
 // 基础中间件
 // CORS：默认只允许同源与 iOS 原生客户端（均无 Origin 头）；
 // 浏览器等跨域来源必须通过 CORS_ORIGIN 显式白名单启用（逗号分隔，* 表示放开）
@@ -52,7 +55,10 @@ app.use(cors({
     if (!origin) return cb(null, true); // 同源 / 原生客户端无 Origin
     if (allowedOrigins.includes('*')) return cb(null, true);
     if (allowedOrigins.includes(origin)) return cb(null, true);
-    return cb(new Error(`跨域来源不被允许: ${origin}`));
+    // 不在白名单的源不抛异常，避免造成 500 白屏；
+    // 浏览器会因缺少 CORS 头自行拦截跨域响应，安全由 authMiddleware 兜底
+    console.warn(`[CORS] 来源不在白名单: ${origin}`);
+    return cb(null, false);
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
@@ -65,6 +71,7 @@ app.use(cors({
 // 审计：剩余路由（rooms/shelves/boxes/categories/libraries/logs/scans/settings/suppliers
 // /llm/voice-command/llm/find-book/auth/library-members/sun-reminders）均为小 JSON，无需单设上限。
 app.use('/api/llm/recognize', express.json({ limit: '10mb' }));
+app.use('/api/llm/recognize-compare', express.json({ limit: '10mb' }));
 app.use('/api/llm/extract-book-details', express.json({ limit: '10mb' }));
 app.use('/api/books', express.json({ limit: '2mb' }));
 app.use(express.json({ limit: '1mb' }));
@@ -187,6 +194,18 @@ app.use('/api/suppliers', suppliersRouter);
 app.use('/api/library-members', libraryMembersRouter);
 app.use('/api/sun-reminders', sunRemindersRouter);
 app.use('/api/covers', coversRouter);
+
+// Web 前端静态文件（构建产物放在 ../web 目录）
+app.use(express.static(path.join(__dirname, '../web')));
+
+// SPA fallback：非 API 路径返回 index.html（支持客户端路由）
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads')) {
+    res.sendFile(path.join(__dirname, '../web/index.html'));
+  } else {
+    next();
+  }
+});
 
 // 全局错误处理
 app.use((err, req, res, next) => {

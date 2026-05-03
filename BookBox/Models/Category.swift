@@ -6,9 +6,13 @@ struct Category: Identifiable, Codable, Hashable {
     var name: String
     var parentId: Int?
     var children: [Category]?
+    var categoryType: String?  // "user" | "statutory"
+
+    var isStatutory: Bool { categoryType == "statutory" }
 
     enum CodingKeys: String, CodingKey {
         case id, name, children
         case parentId = "parent_id"
+        case categoryType = "category_type"
     }
 }

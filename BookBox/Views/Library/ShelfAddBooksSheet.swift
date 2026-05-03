@@ -22,7 +22,7 @@ struct ShelfAddBooksSheet: View {
     @State private var showPhotoPicker = false
     @State private var capturedImage: UIImage?
     @State private var scanResults: [ScanResultItem] = []
-    @State private var isProcessing = false
+    @State private var recognitionTasks: [RecognitionTask] = []
 
     // 挑选已有书状态
     @State private var availableBooks: [Book] = []
@@ -45,7 +45,10 @@ struct ShelfAddBooksSheet: View {
                 .padding(.horizontal)
                 .padding(.vertical, 8)
 
-                Divider()
+                if mode == .scan && !recognitionTasks.isEmpty {
+                    recognitionQueueStrip
+                    Divider()
+                }
 
                 Group {
                     switch mode {
@@ -60,15 +63,13 @@ struct ShelfAddBooksSheet: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("关闭") { dismiss() }
                 }
-                if mode == .scan {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Menu {
-                            Button("拍照", systemImage: "camera") { showCamera = true }
-                            Button("从相册选取", systemImage: "photo") { showPhotoPicker = true }
-                        } label: {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.title3)
-                        }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("拍照", systemImage: "camera") { showCamera = true }
+                        Button("从相册选取", systemImage: "photo") { showPhotoPicker = true }
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title3)
                     }
                 }
             }
@@ -82,7 +83,8 @@ struct ShelfAddBooksSheet: View {
             }
             .onChange(of: capturedImage) { _, newImage in
                 if let image = newImage {
-                    processImage(image)
+                    enqueueRecognition(image)
+                    capturedImage = nil
                 }
             }
             .task(id: mode) {
@@ -103,16 +105,74 @@ struct ShelfAddBooksSheet: View {
 
     // MARK: - 拍照识别
 
+    private var recognitionQueueStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(recognitionTasks) { task in
+                    recognitionThumbnail(task)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+        .background(.thinMaterial)
+    }
+
+    @ViewBuilder
+    private func recognitionThumbnail(_ task: RecognitionTask) -> some View {
+        ZStack {
+            Image(uiImage: task.thumbnail)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 64, height: 64)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            switch task.status {
+            case .recognizing:
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.black.opacity(0.35))
+                    .frame(width: 64, height: 64)
+                ProgressView()
+                    .tint(.white)
+            case .done(let count):
+                VStack {
+                    Spacer()
+                    Text("\(count) 本")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.green.opacity(0.9))
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
+                        .padding(4)
+                }
+                .frame(width: 64, height: 64)
+            case .failed:
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.red.opacity(0.35))
+                    .frame(width: 64, height: 64)
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.white)
+                    .font(.title3)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if task.status != .recognizing {
+                Button {
+                    recognitionTasks.removeAll { $0.id == task.id }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.white, .black.opacity(0.6))
+                }
+                .offset(x: 6, y: -6)
+            }
+        }
+    }
+
     @ViewBuilder
     private var scanContent: some View {
-        if isProcessing {
-            VStack(spacing: 16) {
-                ProgressView().scaleEffect(1.5)
-                Text("AI 正在识别书籍...")
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxHeight: .infinity)
-        } else if scanResults.isEmpty {
+        if scanResults.isEmpty && recognitionTasks.isEmpty {
             ContentUnavailableView {
                 Label("拍摄书籍", systemImage: "camera.viewfinder")
             } description: {
@@ -121,6 +181,8 @@ struct ShelfAddBooksSheet: View {
                 Button("开始拍照") { showCamera = true }
                     .buttonStyle(.borderedProminent)
             }
+        } else if scanResults.isEmpty {
+            recognizingPlaceholder
         } else {
             ScanResultView(
                 results: $scanResults,
@@ -134,36 +196,58 @@ struct ShelfAddBooksSheet: View {
         }
     }
 
-    private func processImage(_ image: UIImage) {
-        isProcessing = true
-        Task {
-            defer {
-                isProcessing = false
-                capturedImage = nil
+    private var recognizingPlaceholder: some View {
+        VStack(spacing: 8) {
+            Spacer()
+            Text("正在识别中，可继续拍照")
+                .foregroundStyle(.secondary)
+                .font(.subheadline)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func enqueueRecognition(_ image: UIImage) {
+        let thumb = image.preparingThumbnail(of: CGSize(width: 160, height: 160)) ?? image
+        let task = RecognitionTask(thumbnail: thumb, status: .recognizing)
+        recognitionTasks.append(task)
+        let taskId = task.id
+
+        Task { @MainActor in
+            guard let compressed = compressImageForRecognition(image) else {
+                updateTask(taskId, status: .failed)
+                errorMessage = "图片压缩失败，请重试"
+                return
             }
             do {
-                guard let compressed = compressImageForRecognition(image) else {
-                    errorMessage = "图片压缩失败，请重试"
-                    return
+                let recognized = try await RecognitionThrottle.shared.run {
+                    try await NetworkService.shared.recognizeBooks(imageData: compressed)
                 }
-                let recognized = try await NetworkService.shared.recognizeBooks(imageData: compressed)
                 if recognized.isEmpty {
+                    updateTask(taskId, status: .failed)
                     errorMessage = "未识别到书籍，请调整角度或距离后重试"
                 } else {
-                    for book in recognized {
-                        let item = ScanResultItem(
-                            title: book.title,
-                            author: book.author,
-                            confidence: book.confidence,
-                            isVerifying: false
-                        )
-                        scanResults.append(item)
+                    for item in recognized {
+                        scanResults.append(ScanResultItem(
+                            title: item.title,
+                            author: item.author,
+                            confidence: item.confidence,
+                            isVerifying: false,
+                            cacheSourceBookId: item.cacheHit?.id
+                        ))
                     }
+                    updateTask(taskId, status: .done(recognized.count))
                 }
             } catch {
+                updateTask(taskId, status: .failed)
                 errorMessage = "AI 识别失败: \(error.chineseDescription)"
             }
         }
+    }
+
+    private func updateTask(_ id: UUID, status: RecognitionTask.Status) {
+        guard let idx = recognitionTasks.firstIndex(where: { $0.id == id }) else { return }
+        recognitionTasks[idx].status = status
     }
 
     // MARK: - 挑选已有书

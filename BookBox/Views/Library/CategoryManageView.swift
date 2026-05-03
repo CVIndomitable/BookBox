@@ -2,7 +2,7 @@ import SwiftUI
 
 /// 分类管理 — 查看、新建、编辑、删除分类
 struct CategoryManageView: View {
-    @State private var categories: [Category] = []
+    @State private var allCategories: [Category] = []
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var showCreateAlert = false
@@ -12,25 +12,40 @@ struct CategoryManageView: View {
     @State private var showEditAlert = false
     @State private var showDeleteConfirm = false
     @State private var deletingCategory: Category?
+    @State private var selectedType = "user"
+
+    private var displayCategories: [Category] {
+        allCategories.filter { $0.categoryType == selectedType }
+    }
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
+            Picker("分类类型", selection: $selectedType) {
+                Text("用户分类").tag("user")
+                Text("法定分类").tag("statutory")
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+
             if isLoading {
                 ProgressView("加载中...")
                     .frame(maxHeight: .infinity)
-            } else if categories.isEmpty {
+            } else if displayCategories.isEmpty {
                 ContentUnavailableView {
-                    Label("暂无分类", systemImage: "tag")
+                    Label(selectedType == "user" ? "暂无用户分类" : "法定分类", systemImage: "tag")
                 } actions: {
-                    Button("新建分类") {
-                        newCategoryName = ""
-                        showCreateAlert = true
+                    if selectedType == "user" {
+                        Button("新建分类") {
+                            newCategoryName = ""
+                            showCreateAlert = true
+                        }
+                        .buttonStyle(.borderedProminent)
                     }
-                    .buttonStyle(.borderedProminent)
                 }
             } else {
                 List {
-                    ForEach(categories) { category in
+                    ForEach(displayCategories) { category in
                         categoryRow(category)
                     }
                 }
@@ -39,12 +54,14 @@ struct CategoryManageView: View {
         }
         .navigationTitle("分类管理")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    newCategoryName = ""
-                    showCreateAlert = true
-                } label: {
-                    Image(systemName: "plus")
+            if selectedType == "user" {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        newCategoryName = ""
+                        showCreateAlert = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
                 }
             }
         }
@@ -78,41 +95,51 @@ struct CategoryManageView: View {
 
     private func categoryRow(_ category: Category) -> some View {
         HStack {
-            Image(systemName: "tag.fill")
-                .foregroundStyle(Color.accentColor)
+            if category.isStatutory {
+                Image(systemName: "lock.fill")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            } else {
+                Image(systemName: "tag.fill")
+                    .foregroundStyle(Color.accentColor)
+            }
             Text(category.name)
             Spacer()
         }
         .contextMenu {
-            Button {
-                editingCategory = category
-                editName = category.name
-                showEditAlert = true
-            } label: {
-                Label("编辑", systemImage: "pencil")
-            }
-            Button(role: .destructive) {
-                deletingCategory = category
-                showDeleteConfirm = true
-            } label: {
-                Label("删除", systemImage: "trash")
+            if !category.isStatutory {
+                Button {
+                    editingCategory = category
+                    editName = category.name
+                    showEditAlert = true
+                } label: {
+                    Label("编辑", systemImage: "pencil")
+                }
+                Button(role: .destructive) {
+                    deletingCategory = category
+                    showDeleteConfirm = true
+                } label: {
+                    Label("删除", systemImage: "trash")
+                }
             }
         }
         .swipeActions(edge: .trailing) {
-            Button(role: .destructive) {
-                deletingCategory = category
-                showDeleteConfirm = true
-            } label: {
-                Label("删除", systemImage: "trash")
+            if !category.isStatutory {
+                Button(role: .destructive) {
+                    deletingCategory = category
+                    showDeleteConfirm = true
+                } label: {
+                    Label("删除", systemImage: "trash")
+                }
+                Button {
+                    editingCategory = category
+                    editName = category.name
+                    showEditAlert = true
+                } label: {
+                    Label("编辑", systemImage: "pencil")
+                }
+                .tint(.orange)
             }
-            Button {
-                editingCategory = category
-                editName = category.name
-                showEditAlert = true
-            } label: {
-                Label("编辑", systemImage: "pencil")
-            }
-            .tint(.orange)
         }
     }
 
@@ -121,7 +148,7 @@ struct CategoryManageView: View {
     private func loadCategories() async {
         isLoading = true
         do {
-            categories = try await NetworkService.shared.fetchCategories()
+            allCategories = try await NetworkService.shared.fetchCategories(type: "all")
         } catch {
             errorMessage = error.chineseDescription
         }
@@ -134,7 +161,7 @@ struct CategoryManageView: View {
         Task {
             do {
                 let category = try await NetworkService.shared.createCategory(name: name)
-                categories.append(category)
+                allCategories.append(category)
             } catch {
                 errorMessage = error.chineseDescription
             }
@@ -148,8 +175,8 @@ struct CategoryManageView: View {
         Task {
             do {
                 let updated = try await NetworkService.shared.updateCategory(id: category.id, name: name)
-                if let idx = categories.firstIndex(where: { $0.id == category.id }) {
-                    categories[idx] = updated
+                if let idx = allCategories.firstIndex(where: { $0.id == category.id }) {
+                    allCategories[idx] = updated
                 }
             } catch {
                 errorMessage = error.chineseDescription
@@ -162,7 +189,7 @@ struct CategoryManageView: View {
         Task {
             do {
                 _ = try await NetworkService.shared.deleteCategory(id: category.id)
-                categories.removeAll { $0.id == category.id }
+                allCategories.removeAll { $0.id == category.id }
             } catch {
                 errorMessage = error.chineseDescription
             }

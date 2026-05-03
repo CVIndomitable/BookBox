@@ -55,6 +55,18 @@ struct BatchCreateResponse: Codable {
     let books: [Book]
 }
 
+/// 批量操作响应
+struct BatchOperationResponse: Codable {
+    let processed: Int?
+    let deleted: Int?
+    let errors: [String]?
+}
+
+/// 图书馆缓存搜索响应
+struct LibraryCacheResponse: Codable {
+    let hits: [Book]
+}
+
 /// 网络服务 — 统一管理所有后端 API 请求
 @MainActor
 final class NetworkService: ObservableObject {
@@ -166,6 +178,7 @@ final class NetworkService: ObservableObject {
                 lastError = nil
                 break
             } catch {
+                if (error as? URLError)?.code == .cancelled { throw error }
                 lastError = error
                 #if DEBUG
                 print("[NET] 请求失败 (第\(attempt)次): \(error)")
@@ -450,8 +463,47 @@ final class NetworkService: ObservableObject {
     }
 
     /// 软删：把书放进回收站（服务端会在 30 天后物理删除）
-    func deleteBook(id: Int) async throws -> EmptyResponse {
-        try await request("DELETE", path: "/books/\(id)")
+    func deleteBook(id: Int, returnToLibrary: Bool = false) async throws -> EmptyResponse {
+        let queryItems = returnToLibrary ? [URLQueryItem(name: "returnToLibrary", value: "true")] : nil
+        return try await request("DELETE", path: "/books/\(id)", queryItems: queryItems)
+    }
+
+    // MARK: - 批量操作
+
+    func batchDeleteBooks(ids: [Int], returnToLibrary: Bool) async throws -> BatchOperationResponse {
+        struct Req: Codable {
+            let bookIds: [Int]
+            let returnToLibrary: Bool
+        }
+        return try await request("POST", path: "/books/batch-delete", body: Req(bookIds: ids, returnToLibrary: returnToLibrary))
+    }
+
+    func batchMoveBooks(ids: [Int], toType: LocationType, toId: Int?) async throws -> BatchOperationResponse {
+        struct Req: Codable {
+            let bookIds: [Int]
+            let toType: String
+            let toId: Int?
+        }
+        return try await request("POST", path: "/books/batch-move", body: Req(bookIds: ids, toType: toType.rawValue, toId: toId))
+    }
+
+    func batchDeleteShelves(ids: [Int]) async throws -> BatchOperationResponse {
+        struct Req: Codable { let shelfIds: [Int] }
+        return try await request("POST", path: "/shelves/batch-delete", body: Req(shelfIds: ids))
+    }
+
+    func batchDeleteBoxes(ids: [Int]) async throws -> BatchOperationResponse {
+        struct Req: Codable { let boxIds: [Int] }
+        return try await request("POST", path: "/boxes/batch-delete", body: Req(boxIds: ids))
+    }
+
+    // MARK: - 图书馆缓存搜索
+
+    func searchLibraryCache(title: String, author: String? = nil, isbn: String? = nil) async throws -> LibraryCacheResponse {
+        var queryItems = [URLQueryItem(name: "title", value: title)]
+        if let author { queryItems.append(URLQueryItem(name: "author", value: author)) }
+        if let isbn { queryItems.append(URLQueryItem(name: "isbn", value: isbn)) }
+        return try await request("GET", path: "/books/library-cache/search", queryItems: queryItems)
     }
 
     // MARK: - 回收站
@@ -518,8 +570,9 @@ final class NetworkService: ObservableObject {
 
     // MARK: - 分类 API
 
-    func fetchCategories() async throws -> [Category] {
-        try await request("GET", path: "/categories")
+    func fetchCategories(type: String? = nil) async throws -> [Category] {
+        let queryItems = type.map { [URLQueryItem(name: "type", value: $0)] }
+        return try await request("GET", path: "/categories", queryItems: queryItems)
     }
 
     func createCategory(name: String, parentId: Int? = nil) async throws -> Category {

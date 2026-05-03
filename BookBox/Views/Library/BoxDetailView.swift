@@ -269,13 +269,14 @@ struct BoxDetailView: View {
 
     private func loadDetail() async {
         isLoading = true
+        defer { isLoading = false }
         do {
             detail = try await NetworkService.shared.fetchBox(id: box.id)
         } catch {
+            if (error as? URLError)?.code == .cancelled { return }
             errorMessage = error.chineseDescription
             detail = box
         }
-        isLoading = false
     }
 
     private func updateBox() {

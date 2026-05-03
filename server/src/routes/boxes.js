@@ -350,4 +350,71 @@ router.delete('/:id/books/:bookId', checkContainerAccess('box', 'member'), async
   }
 });
 
+// 批量删除箱子
+router.post('/batch-delete', checkLibraryAccess('admin'), async (req, res, next) => {
+  try {
+    const { boxIds } = req.body;
+    if (!Array.isArray(boxIds) || boxIds.length === 0) {
+      return res.status(400).json({ error: '请提供箱子 ID 列表' });
+    }
+
+    const ids = boxIds.map((id, i) => parseId(id, `箱子 ID[${i}]`));
+    const errors = [];
+    let deleted = 0;
+
+    for (const id of ids) {
+      try {
+        const box = await prisma.box.findUnique({
+          where: { id },
+          select: { libraryId: true },
+        });
+        if (!box) {
+          errors.push(`箱子 ${id} 不存在`);
+          continue;
+        }
+        if (box.libraryId !== req.libraryId) {
+          errors.push(`箱子 ${id} 不属于当前书库`);
+          continue;
+        }
+
+        await prisma.$transaction(async (tx) => {
+          const books = await tx.book.findMany({
+            where: { locationType: 'box', locationId: id, deletedAt: null },
+            select: { id: true },
+          });
+
+          for (const book of books) {
+            await tx.bookLog.create({
+              data: {
+                bookId: book.id,
+                action: 'remove',
+                fromType: 'box',
+                fromId: id,
+                toType: 'none',
+                method: 'manual',
+              },
+            });
+          }
+
+          await tx.book.updateMany({
+            where: { locationType: 'box', locationId: id },
+            data: { locationType: 'none', locationId: null },
+          });
+
+          await tx.box.delete({ where: { id } });
+        }, { isolationLevel: 'Serializable' });
+
+        deleted++;
+      } catch (err) {
+        errors.push(`箱子 ${id}: ${err.message}`);
+      }
+    }
+
+    res.json({ deleted, errors });
+  } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
+    next(err);
+  }
+});
+
 export default router;

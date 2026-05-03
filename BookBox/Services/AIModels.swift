@@ -33,9 +33,10 @@ struct RecognizedBook: Codable, Identifiable {
     var author: String?
     var confidence: ConfidenceLevel
     var category: String?   // AI 建议的分类
+    var cacheHit: LibraryCacheHit?  // 图书馆缓存命中信息
 
     enum CodingKeys: String, CodingKey {
-        case id, title, author, confidence, category
+        case id, title, author, confidence, category, cacheHit
     }
 
     init(from decoder: Decoder) throws {
@@ -46,7 +47,10 @@ struct RecognizedBook: Codable, Identifiable {
         author = try container.decodeIfPresent(String.self, forKey: .author)
         confidence = try container.decode(ConfidenceLevel.self, forKey: .confidence)
         category = try container.decodeIfPresent(String.self, forKey: .category)
+        cacheHit = try container.decodeIfPresent(LibraryCacheHit.self, forKey: .cacheHit)
     }
+
+    var isFromCache: Bool { cacheHit != nil }
 
     /// 置信度映射到校验状态颜色
     var verifyStatus: VerifyStatus {
@@ -56,6 +60,16 @@ struct RecognizedBook: Codable, Identifiable {
         case .low: .notFound
         }
     }
+}
+
+/// 图书馆缓存命中信息（来自系统书库"图书馆"）
+struct LibraryCacheHit: Codable {
+    let id: Int
+    let title: String
+    let author: String?
+    let isbn: String?
+    let publisher: String?
+    let categoryId: Int?
 }
 
 /// 语音指令解析结果

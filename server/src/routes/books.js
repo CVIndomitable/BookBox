@@ -60,8 +60,20 @@ async function validateLocationInLibrary(client, locationType, locationId, libra
 // 合法的地区模式
 const VALID_REGIONS = ['mainland', 'overseas'];
 
+
 // 回收站保留天数：超过此天数的软删书籍会被 purgeExpiredTrash 物理删除
 export const TRASH_RETENTION_DAYS = 30;
+
+let _systemLibraryId = undefined;
+async function getSystemLibraryId() {
+  if (_systemLibraryId !== undefined) return _systemLibraryId;
+  const sysLib = await prisma.library.findFirst({
+    where: { libraryType: 'system' },
+    select: { id: true },
+  });
+  _systemLibraryId = sysLib?.id ?? null;
+  return _systemLibraryId;
+}
 
 // 将客户端可能传来的 "29.80元" / "¥29.8" 等形式标准化为 number 或 null，
 // 非法值一律返回 null 而不是抛错——定价是弱字段，不应阻塞整个写入。
@@ -86,14 +98,24 @@ router.get('/', checkLibraryAccess('member'), async (req, res, next) => {
     const { page, pageSize, skip, take } = parsePagination(req.query);
 
     // 回收站里的书不出现在任何正常列表中；强制按 libraryId 过滤避免跨库泄露
-    const where = { deletedAt: null, libraryId: req.libraryId };
+    // 不展示系统书库的书
+    // 注：用 AND 数组组合所有条件，避免 Prisma 在 NOT + OR 同层时可能产生的意外交互
+    const systemLibraryId = await getSystemLibraryId();
+    const conditions = [{ libraryId: req.libraryId }];
+    if (systemLibraryId) {
+      conditions.push({ libraryId: { not: systemLibraryId } });
+    }
 
     if (search) {
-      where.OR = [
-        { title: { contains: search } },
-        { author: { contains: search } },
-      ];
+      conditions.push({
+        OR: [
+          { title: { contains: search } },
+          { author: { contains: search } },
+        ],
+      });
     }
+
+    const where = { deletedAt: null, AND: conditions };
 
     if (categoryId) {
       where.categoryId = parseId(categoryId, '分类 ID');
@@ -145,9 +167,13 @@ router.get('/', checkLibraryAccess('member'), async (req, res, next) => {
 router.post('/', checkLibraryAccess('member'), async (req, res, next) => {
   try {
     const {
-      title, author, isbn, publisher, publishDate, price, coverUrl,
+      title, author, isbn, publisher, edition, price, coverUrl,
       categoryId, verifyStatus, verifySource, rawOcrText,
-      locationType, locationId,
+      locationType, locationId, cacheSourceBookId,
+      adaptation, translator, authorNationality, publisherPerson,
+      responsibleEditor, responsiblePrinting, coverDesign,
+      phone, address, postalCode, printingHouse,
+      impression, format, printedSheets, wordCount,
     } = req.body;
 
     if (!title) {
@@ -175,7 +201,7 @@ router.post('/', checkLibraryAccess('member'), async (req, res, next) => {
           author,
           isbn,
           publisher,
-          publishDate: publishDate || null,
+          edition: edition || null,
           price: parsePrice(price),
           coverUrl,
           categoryId: parseOptionalId(categoryId),
@@ -185,6 +211,22 @@ router.post('/', checkLibraryAccess('member'), async (req, res, next) => {
           locationType: finalLocationType,
           locationId: finalLocationId,
           libraryId: req.libraryId,
+          cacheSourceBookId: parseOptionalId(cacheSourceBookId),
+          adaptation: adaptation || null,
+          translator: translator || null,
+          authorNationality: authorNationality || null,
+          publisherPerson: publisherPerson || null,
+          responsibleEditor: responsibleEditor || null,
+          responsiblePrinting: responsiblePrinting || null,
+          coverDesign: coverDesign || null,
+          phone: phone || null,
+          address: address || null,
+          postalCode: postalCode || null,
+          printingHouse: printingHouse || null,
+          impression: impression || null,
+          format: format || null,
+          printedSheets: printedSheets || null,
+          wordCount: wordCount || null,
         },
       });
 
@@ -586,7 +628,7 @@ router.post('/batch', async (req, res, next) => {
             author: bookData.author,
             isbn: bookData.isbn,
             publisher: bookData.publisher,
-            publishDate: bookData.publishDate || null,
+            edition: bookData.edition || bookData.publishDate || null,
             price: parsePrice(bookData.price),
             coverUrl: bookData.coverUrl,
             categoryId: parseOptionalId(bookData.categoryId),
@@ -596,6 +638,21 @@ router.post('/batch', async (req, res, next) => {
             locationType: finalLocationType,
             locationId: finalLocationId,
             libraryId: targetLibraryId,
+            adaptation: bookData.adaptation || null,
+            translator: bookData.translator || null,
+            authorNationality: bookData.authorNationality || null,
+            publisherPerson: bookData.publisherPerson || null,
+            responsibleEditor: bookData.responsibleEditor || null,
+            responsiblePrinting: bookData.responsiblePrinting || null,
+            coverDesign: bookData.coverDesign || null,
+            phone: bookData.phone || null,
+            address: bookData.address || null,
+            postalCode: bookData.postalCode || null,
+            printingHouse: bookData.printingHouse || null,
+            impression: bookData.impression || null,
+            format: bookData.format || null,
+            printedSheets: bookData.printedSheets || null,
+            wordCount: bookData.wordCount || null,
           },
         });
 
@@ -627,6 +684,7 @@ router.post('/batch', async (req, res, next) => {
   } catch (err) {
     if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
     if (handleTxConflict(res, err)) return;
+
     next(err);
   }
 });
@@ -643,13 +701,28 @@ router.get('/export', checkLibraryAccess('member'), async (req, res, next) => {
     });
 
     const csv = [
-      '书名,作者,ISBN,出版社,出版时间,定价,位置类型,位置ID',
+      '书名,作者,改编,译者,作者国籍,ISBN,出版社,版次,出版人,责任编辑,责任印制,封面设计,电话,地址,邮编,印刷,印次,开本,印张,字数,定价,位置类型,位置ID',
       ...booksList.map((book) => [
         book.title,
         book.author,
+        book.adaptation,
+        book.translator,
+        book.authorNationality,
         book.isbn,
         book.publisher,
-        book.publishDate,
+        book.edition,
+        book.publisherPerson,
+        book.responsibleEditor,
+        book.responsiblePrinting,
+        book.coverDesign,
+        book.phone,
+        book.address,
+        book.postalCode,
+        book.printingHouse,
+        book.impression,
+        book.format,
+        book.printedSheets,
+        book.wordCount,
         book.price ?? '',
         book.locationType,
         book.locationId || '',
@@ -658,8 +731,243 @@ router.get('/export', checkLibraryAccess('member'), async (req, res, next) => {
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="books-${Date.now()}.csv"`);
-    res.send('\uFEFF' + csv); // BOM for Excel
+    res.send('﻿' + csv); // BOM for Excel
   } catch (err) {
+    next(err);
+  }
+});
+
+// 在系统图书馆中搜索缓存书籍
+router.get('/library-cache/search', async (req, res, next) => {
+  try {
+    const { title, author, isbn } = req.query;
+    if (!title && !isbn) {
+      return res.status(400).json({ error: '请提供书名或 ISBN' });
+    }
+
+    const systemLibraryId = await getSystemLibraryId();
+    if (!systemLibraryId) {
+      return res.json({ hits: [] });
+    }
+
+    const where = {
+      deletedAt: null,
+      libraryId: systemLibraryId,
+    };
+    const OR = [];
+    if (title) {
+      OR.push({ title: { contains: title } });
+    }
+    if (author) {
+      OR.push({ author: { contains: author } });
+    }
+    if (isbn) {
+      OR.push({ isbn: { equals: isbn } });
+    }
+    if (OR.length > 0) {
+      where.OR = OR;
+    }
+
+    const hits = await prisma.book.findMany({
+      where,
+      take: 5,
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    res.json({ hits });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 批量删除书籍
+router.post('/batch-delete', checkLibraryAccess('member'), async (req, res, next) => {
+  try {
+    const { bookIds, returnToLibrary } = req.body;
+
+    if (!Array.isArray(bookIds) || bookIds.length === 0) {
+      return res.status(400).json({ error: '请提供书籍 ID 列表' });
+    }
+
+    const ids = bookIds.map((id, i) => {
+      const parsed = parseId(id, `书籍 ID[${i}]`);
+      return parsed;
+    });
+
+    const toLibrary = returnToLibrary === true;
+    const errors = [];
+    let processed = 0;
+
+    if (toLibrary) {
+      const systemLibraryId = await getSystemLibraryId();
+      if (!systemLibraryId) {
+        return res.status(500).json({ error: '系统图书馆未初始化' });
+      }
+
+      await prisma.$transaction(async (tx) => {
+        for (const id of ids) {
+          const book = await tx.book.findFirst({
+            where: { id, deletedAt: null, libraryId: req.libraryId },
+          });
+          if (!book) {
+            errors.push(`书籍 ${id} 不存在或无权操作`);
+            continue;
+          }
+
+          await tx.bookLog.create({
+            data: {
+              bookId: id,
+              action: 'move',
+              fromType: book.locationType,
+              fromId: book.locationId,
+              toType: 'library',
+              method: 'manual',
+              note: `还给图书馆: ${book.title}${book.author ? ` / ${book.author}` : ''}`,
+            },
+          });
+
+          await tx.book.update({
+            where: { id },
+            data: {
+              libraryId: systemLibraryId,
+              locationType: 'none',
+              locationId: null,
+            },
+          });
+
+          if (book.locationType !== 'none' && book.locationId) {
+            await updateContainerCount(tx, book.locationType, book.locationId);
+          }
+
+          processed++;
+        }
+      }, { isolationLevel: 'Serializable' });
+    } else {
+      await prisma.$transaction(async (tx) => {
+        for (const id of ids) {
+          const book = await tx.book.findFirst({
+            where: { id, deletedAt: null, libraryId: req.libraryId },
+          });
+          if (!book) {
+            errors.push(`书籍 ${id} 不存在或无权操作`);
+            continue;
+          }
+
+          await tx.bookLog.create({
+            data: {
+              bookId: id,
+              action: 'remove',
+              fromType: book.locationType,
+              fromId: book.locationId,
+              toType: 'none',
+              method: 'manual',
+              note: `移入回收站: ${book.title}${book.author ? ` / ${book.author}` : ''}`,
+            },
+          });
+
+          await tx.book.update({
+            where: { id },
+            data: { deletedAt: new Date() },
+          });
+
+          if (book.locationType !== 'none' && book.locationId) {
+            await updateContainerCount(tx, book.locationType, book.locationId);
+          }
+
+          processed++;
+        }
+      }, { isolationLevel: 'Serializable' });
+    }
+
+    res.json({ processed, errors });
+  } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
+    if (handleTxConflict(res, err)) return;
+    next(err);
+  }
+});
+
+// 批量移动书籍
+router.post('/batch-move', checkLibraryAccess('member'), async (req, res, next) => {
+  try {
+    const { bookIds, toType, toId } = req.body;
+
+    if (!Array.isArray(bookIds) || bookIds.length === 0) {
+      return res.status(400).json({ error: '请提供书籍 ID 列表' });
+    }
+    validateLocationType(toType);
+    const targetId = parseOptionalId(toId);
+    if (toType !== 'none' && !targetId) {
+      return res.status(400).json({ error: '指定位置类型时必须提供位置 ID' });
+    }
+
+    const ids = bookIds.map((id, i) => parseId(id, `书籍 ID[${i}]`));
+    const errors = [];
+    let processed = 0;
+
+    await prisma.$transaction(async (tx) => {
+      // 确定目标容器归属
+      let targetLibraryId = req.libraryId;
+      if (toType !== 'none') {
+        const model = toType === 'shelf' ? 'shelf' : toType === 'box' ? 'box' : null;
+        if (model) {
+          const container = await tx[model].findUnique({
+            where: { id: targetId },
+            select: { libraryId: true },
+          });
+          if (!container) throwHttp(404, '目标位置不存在');
+          targetLibraryId = container.libraryId || req.libraryId;
+        }
+      }
+
+      for (const id of ids) {
+        const book = await tx.book.findFirst({
+          where: { id, deletedAt: null, libraryId: req.libraryId },
+        });
+        if (!book) {
+          errors.push(`书籍 ${id} 不存在或无权操作`);
+          continue;
+        }
+
+        await tx.bookLog.create({
+          data: {
+            bookId: id,
+            action: 'move',
+            fromType: book.locationType,
+            fromId: book.locationId,
+            toType,
+            toId: targetId,
+            method: 'manual',
+          },
+        });
+
+        await tx.book.update({
+          where: { id },
+          data: {
+            locationType: toType,
+            locationId: targetId,
+            libraryId: toType === 'none' ? book.libraryId : targetLibraryId,
+          },
+        });
+
+        // 更新原容器 book_count
+        if (book.locationType !== 'none' && book.locationId) {
+          await updateContainerCount(tx, book.locationType, book.locationId);
+        }
+
+        processed++;
+      }
+
+      // 更新目标容器 book_count
+      if (toType !== 'none' && targetId && processed > 0) {
+        await updateContainerCount(tx, toType, targetId);
+      }
+    }, { isolationLevel: 'Serializable' });
+
+    res.json({ processed, errors });
+  } catch (err) {
+    if (err.statusCode) return res.status(err.statusCode).json({ error: err.message });
+    if (handleTxConflict(res, err)) return;
     next(err);
   }
 });
@@ -694,9 +1002,13 @@ router.put('/:id', checkBookAccess('member'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书籍 ID');
     const {
-      title, author, isbn, publisher, publishDate, price, coverUrl,
+      title, author, isbn, publisher, edition, price, coverUrl,
       categoryId, verifyStatus, verifySource,
       locationType, locationId,
+      adaptation, translator, authorNationality, publisherPerson,
+      responsibleEditor, responsiblePrinting, coverDesign,
+      phone, address, postalCode, printingHouse,
+      impression, format, printedSheets, wordCount,
     } = req.body;
 
     const existingBook = await prisma.book.findFirst({ where: { id, deletedAt: null } });
@@ -709,13 +1021,28 @@ router.put('/:id', checkBookAccess('member'), async (req, res, next) => {
     if (author !== undefined) data.author = author;
     if (isbn !== undefined) data.isbn = isbn;
     if (publisher !== undefined) data.publisher = publisher;
-    if (publishDate !== undefined) data.publishDate = publishDate || null;
+    if (edition !== undefined) data.edition = edition || null;
     if (price !== undefined) data.price = parsePrice(price);
     if (coverUrl !== undefined) data.coverUrl = coverUrl;
     if (categoryId !== undefined)
       data.categoryId = categoryId ? parseId(categoryId, '分类 ID') : null;
     if (verifyStatus !== undefined) data.verifyStatus = verifyStatus;
     if (verifySource !== undefined) data.verifySource = verifySource;
+    if (adaptation !== undefined) data.adaptation = adaptation || null;
+    if (translator !== undefined) data.translator = translator || null;
+    if (authorNationality !== undefined) data.authorNationality = authorNationality || null;
+    if (publisherPerson !== undefined) data.publisherPerson = publisherPerson || null;
+    if (responsibleEditor !== undefined) data.responsibleEditor = responsibleEditor || null;
+    if (responsiblePrinting !== undefined) data.responsiblePrinting = responsiblePrinting || null;
+    if (coverDesign !== undefined) data.coverDesign = coverDesign || null;
+    if (phone !== undefined) data.phone = phone || null;
+    if (address !== undefined) data.address = address || null;
+    if (postalCode !== undefined) data.postalCode = postalCode || null;
+    if (printingHouse !== undefined) data.printingHouse = printingHouse || null;
+    if (impression !== undefined) data.impression = impression || null;
+    if (format !== undefined) data.format = format || null;
+    if (printedSheets !== undefined) data.printedSheets = printedSheets || null;
+    if (wordCount !== undefined) data.wordCount = wordCount || null;
 
     // 如果更新了位置，执行移动逻辑
     const isMoving = locationType !== undefined;
@@ -800,17 +1127,56 @@ router.put('/:id', checkBookAccess('member'), async (req, res, next) => {
 
 // 删除书籍 — 软删进回收站（保留 locationType/locationId，还原时能回到原位）
 // 30 天后由定时任务物理删除；容器 bookCount 立即重算（updateContainerCount 已过滤 deletedAt:null）
+// 删除书籍：默认软删除（移入回收站），可选 returnToLibrary=true 归还到系统图书馆
 router.delete('/:id', checkBookAccess('member'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '书籍 ID');
+    const returnToLibrary = req.query.returnToLibrary === 'true';
 
     const book = await prisma.book.findFirst({ where: { id, deletedAt: null } });
     if (!book) {
       return res.status(404).json({ error: '书籍不存在' });
     }
 
+    if (returnToLibrary) {
+      const systemLibraryId = await getSystemLibraryId();
+      if (!systemLibraryId) {
+        return res.status(500).json({ error: '系统图书馆未初始化' });
+      }
+
+      await prisma.$transaction(async (tx) => {
+        await tx.bookLog.create({
+          data: {
+            bookId: id,
+            action: 'move',
+            fromType: book.locationType,
+            fromId: book.locationId,
+            toType: 'library',
+            method: 'manual',
+            note: `还给图书馆: ${book.title}${book.author ? ` / ${book.author}` : ''}`,
+          },
+        });
+
+        await tx.book.update({
+          where: { id },
+          data: {
+            libraryId: systemLibraryId,
+            locationType: 'none',
+            locationId: null,
+          },
+        });
+
+        // 更新原容器 book_count
+        if (book.locationType !== 'none' && book.locationId) {
+          await updateContainerCount(tx, book.locationType, book.locationId);
+        }
+      }, { isolationLevel: 'Serializable' });
+
+      return res.json({ message: '已还给图书馆' });
+    }
+
+    // 原有软删除逻辑
     await prisma.$transaction(async (tx) => {
-      // 写入删除日志
       await tx.bookLog.create({
         data: {
           bookId: id,
@@ -828,7 +1194,6 @@ router.delete('/:id', checkBookAccess('member'), async (req, res, next) => {
         data: { deletedAt: new Date() },
       });
 
-      // 更新容器 book_count（软删后不应计入）
       if (book.locationType !== 'none' && book.locationId) {
         await updateContainerCount(tx, book.locationType, book.locationId);
       }
@@ -993,12 +1358,27 @@ router.post('/batch-import', checkLibraryAccess('member'), async (req, res, next
             author: bookData.author || null,
             isbn: bookData.isbn || null,
             publisher: bookData.publisher || null,
-            publishDate: bookData.publishDate || null,
+            edition: bookData.edition || bookData.publishDate || null,
             price: parsePrice(bookData.price),
             libraryId: req.libraryId,
             locationType: finalLocationType,
             locationId: finalLocationId,
-            verifyStatus: bookData.verifyStatus || 'manual'
+            verifyStatus: bookData.verifyStatus || 'manual',
+            adaptation: bookData.adaptation || null,
+            translator: bookData.translator || null,
+            authorNationality: bookData.authorNationality || null,
+            publisherPerson: bookData.publisherPerson || null,
+            responsibleEditor: bookData.responsibleEditor || null,
+            responsiblePrinting: bookData.responsiblePrinting || null,
+            coverDesign: bookData.coverDesign || null,
+            phone: bookData.phone || null,
+            address: bookData.address || null,
+            postalCode: bookData.postalCode || null,
+            printingHouse: bookData.printingHouse || null,
+            impression: bookData.impression || null,
+            format: bookData.format || null,
+            printedSheets: bookData.printedSheets || null,
+            wordCount: bookData.wordCount || null,
           }
         });
 

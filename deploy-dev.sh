@@ -10,6 +10,7 @@ rsync -avz --delete \
   --exclude 'node_modules' \
   --exclude '.env' \
   --exclude 'logs' \
+  --exclude 'uploads' \
   server/ ${USER}@${SERVER}:${REMOTE_DIR}/
 
 echo "🔧 远程配置开发环境..."

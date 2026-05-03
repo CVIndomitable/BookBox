@@ -28,12 +28,19 @@ struct ClassifyResultView: View {
                                 .clipShape(Capsule())
                         }
 
-                        // 分类选择
+                        // 分类选择（含法定分类）
                         if !categories.isEmpty {
                             Picker("分类", selection: categoryBinding(for: title.id)) {
                                 Text("未分类").tag(0)
-                                ForEach(categories) { category in
-                                    Text(category.name).tag(category.id)
+                                Section("法定分类") {
+                                    ForEach(categories.filter { $0.isStatutory }) { category in
+                                        Text(category.name).tag(category.id)
+                                    }
+                                }
+                                Section("用户分类") {
+                                    ForEach(categories.filter { !$0.isStatutory }) { category in
+                                        Text(category.name).tag(category.id)
+                                    }
                                 }
                             }
                             .pickerStyle(.menu)
@@ -64,7 +71,7 @@ struct ClassifyResultView: View {
     private func loadCategories() async {
         isLoadingCategories = true
         do {
-            categories = try await NetworkService.shared.fetchCategories()
+            categories = try await NetworkService.shared.fetchCategories(type: "all")
         } catch {
             // 分类加载失败不阻塞使用
         }

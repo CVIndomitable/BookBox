@@ -10,7 +10,10 @@ const router = Router();
 router.get('/', authenticate, async (req, res, next) => {
   try {
     const memberships = await prisma.libraryMember.findMany({
-      where: { userId: req.user.id },
+      where: {
+        userId: req.user.id,
+        library: { libraryType: { not: 'system' } },
+      },
       include: {
         library: {
           include: {
@@ -168,6 +171,9 @@ router.delete('/:id', authenticate, checkLibraryAccess('owner'), async (req, res
     const library = await prisma.library.findUnique({ where: { id } });
     if (!library) {
       return res.status(404).json({ error: '书库不存在' });
+    }
+    if (library.libraryType === 'system') {
+      return res.status(403).json({ error: '系统书库不可删除' });
     }
 
     await prisma.$transaction(async (tx) => {

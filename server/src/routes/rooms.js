@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import prisma from '../utils/prisma.js';
-import { parseId } from '../utils/validate.js';
+import { parseId, parseOptionalId } from '../utils/validate.js';
 import { handleTxConflict } from '../services/bookLocation.js';
 import { authenticate, checkLibraryAccess, checkContainerAccess } from '../middleware/auth.js';
 

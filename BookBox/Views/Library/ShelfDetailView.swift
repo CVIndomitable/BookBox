@@ -262,12 +262,13 @@ struct ShelfDetailView: View {
 
     private func loadDetail() async {
         isLoading = true
+        defer { isLoading = false }
         do {
             shelf = try await NetworkService.shared.fetchShelf(id: shelfId)
         } catch {
+            if (error as? URLError)?.code == .cancelled { return }
             errorMessage = error.chineseDescription
         }
-        isLoading = false
     }
 
     private func updateShelf() {

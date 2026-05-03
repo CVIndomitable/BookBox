@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import crypto from 'crypto';
 import prisma from '../utils/prisma.js';
-import { callWithFallback, callWithFallbackStream } from '../utils/llmPool.js';
+import { callWithFallback, callWithFallbackStream, callOneSupplier, getEnabledSuppliers } from '../utils/llmPool.js';
 
 const router = Router();
 
@@ -219,7 +219,12 @@ router.post('/recognize', async (req, res, next) => {
 - title：书名（如果完全无法辨认文字，写"无法辨认"）
 - author：作者（看不到则为 null）
 - confidence：置信度（high = 书名清晰可读；medium = 能大致辨认但不完全确定；low = 能看到是书但书名很难辨认）
-- category：根据书名和作者推断最合适的分类，从以下选项中选一个：文学小说、历史文化、哲学思想、科学技术、经济管理、艺术设计、教育学习、社科心理、生活休闲、儿童读物、其他
+- category：根据书名和作者推断最合适的分类，从以下选项中选一个：
+  A-马克思主义, B-哲学宗教, C-社会科学总论, D-政治法律, E-军事, F-经济,
+  G-文化科学教育体育, H-语言文字, I-文学, J-艺术, K-历史地理, N-自然科学总论,
+  O-数理科学和化学, P-天文学地球科学, Q-生物科学, R-医药卫生, S-农业科学,
+  T-工业技术, U-交通运输, V-航空航天, X-环境科学, Z-综合性图书
+  如无法确定，填"其他"
 
 只返回 JSON 数组，不要其他文字。`;
 
@@ -231,6 +236,25 @@ router.post('/recognize', async (req, res, next) => {
       userText: prompt,
       image: { mediaType, data: cleanedImage },
       validate: (t) => {
+
+        // 先扫一遍整段文本，命中拒答特征就判失败降级。
+        // 背景：xuedingtoken 的个别后端会把视觉请求路由到"Kiro"之类的代码助手，
+        // 对方偶尔会把拒答文字装进 JSON 数组里（例如 [{"title":"抱歉，我是代码助手"}]），
+        // 绕过了 JSON.parse 这关。在更靠前的原文层就剔除最稳妥。
+        const refusalPatterns = [
+          /I can'?t\s+(?:analyze|help|process|assist|see|discuss)/i,
+          /I'?m\s+(?:a|an)\s+(?:text-based|coding|AI|software|developer|helpful)/i,
+          /I'?m\s+Kiro/i,
+          /I appreciate your request/i,
+          /I'?m\s+sorry[,，.]/i,
+          /抱歉[，,]\s*我(?:无法|不能|没有|只能)/,
+          /我是\s*(?:一[个款]?|)(?:AI|Kiro|代码|软件|编程|开发|助手)/,
+          /我(?:无法|不能)(?:处理|分析|识别|讨论|帮助)/,
+        ];
+        if (refusalPatterns.some((re) => re.test(t))) {
+          return { ok: false, error: `疑似拒答文本：${t.trim().slice(0, 80)}` };
+        }
+
         let parsed;
         try {
           parsed = JSON.parse(cleanJson(t));
@@ -249,11 +273,62 @@ router.post('/recognize', async (req, res, next) => {
         if (!Array.isArray(parsed)) {
           return { ok: false, error: '返回结构不是数组' };
         }
+
+
+        // 每项的 title 再过一遍拒答特征。曾经出现过 [{"title":"再来一个吧",...}]
+        // 这种聊天式幻觉，绕过了 JSON 校验。中文语气助词（吧/呢/啊/哦）+ 极短长度
+        // 可以大概率判定是对话而非书名。
+        const chatLikeTitle = (title) => {
+          if (typeof title !== 'string') return false;
+          const s = title.trim();
+          if (!s) return false;
+          if (refusalPatterns.some((re) => re.test(s))) return true;
+          // 5 个字以内 + 含口语语气助词，判为对话
+          return s.length <= 5 && /[吧呢啊哦嗯呀嘛哈]$/.test(s);
+        };
+        if (parsed.length > 0 && parsed.every((b) => chatLikeTitle(b?.title))) {
+          return { ok: false, error: `疑似对话式输出：${JSON.stringify(parsed).slice(0, 80)}` };
+        }
+
         return { ok: true, parsed };
       },
     });
 
-    res.json({ books, supplier });
+    // 在系统图书馆中搜索缓存命中
+    const bookList = Array.isArray(books) ? books : [];
+    let cacheHits = false;
+    try {
+      const sysLib = await prisma.library.findFirst({
+        where: { libraryType: 'system' },
+        select: { id: true },
+      });
+      if (sysLib) {
+        const withCache = await Promise.all(bookList.map(async (b) => {
+          if (!b.title || b.title === '无法辨认') return b;
+          const hit = await prisma.book.findFirst({
+            where: {
+              deletedAt: null,
+              libraryId: sysLib.id,
+              OR: [
+                { title: { contains: b.title } },
+                ...(b.author ? [{ author: { contains: b.author } }] : []),
+              ],
+            },
+            select: { id: true, title: true, author: true, isbn: true, publisher: true, categoryId: true },
+          });
+          if (hit) {
+            cacheHits = true;
+            return { ...b, cacheHit: hit };
+          }
+          return b;
+        }));
+        return res.json({ books: withCache, supplier });
+      }
+    } catch (e) {
+      // 缓存搜索失败不影响主流程
+    }
+
+    res.json({ books: bookList, supplier });
   } catch (err) {
     console.error('[LLM recognize]', err.message);
     if (err.statusCode) {
@@ -266,11 +341,116 @@ router.post('/recognize', async (req, res, next) => {
   }
 });
 
+
+
+
+// POST /recognize-compare — 并行调用所有启用的视觉供应商，返回每家的原始输出+耗时
+// 用于人工评估各供应商对同一张照片的识别质量，不走 fallback、不做 validate。
+router.post('/recognize-compare', async (req, res, next) => {
+  try {
+    const { image } = req.body;
+    if (!image) {
+      return res.status(400).json({ error: '缺少图片数据' });
+    }
+    const cleanedImage = cleanBase64Image(image);
+    if (!cleanedImage) {
+      return res.status(400).json({ error: '图片数据格式无效，请重新拍照' });
+    }
+    const buf = Buffer.from(cleanedImage, 'base64');
+    if (buf.length > 5 * 1024 * 1024) {
+      return res.status(413).json({ error: '图片过大（上限 5MB）' });
+    }
+    const isPng = buf.length > 4 && buf[0] === 0x89 && buf[1] === 0x50;
+    const mediaType = isPng ? 'image/png' : 'image/jpeg';
+
+    const prompt = `请按以下两步分析这张照片：
+
+第一步：识别书籍。仔细观察照片，找出所有是书的物体。书可能以任意姿态出现：书脊朝外、封面朝上、摊开、歪斜、堆叠等。注意区分书籍和其他物品（文件夹、笔记本、平板电脑、纸张等不算书）。
+
+第二步：提取书名。对第一步中识别出的每一本书，尝试从书脊、封面或内页上读取书名和作者。如果文字模糊、被遮挡或角度太大无法辨认，仍然记录这本书但标注为低置信度。
+
+请以 JSON 数组返回结果，每项包含：
+- title：书名（如果完全无法辨认文字，写无法辨认）
+- author：作者（看不到则为 null）
+- confidence：置信度（high = 书名清晰可读；medium = 能大致辨认但不完全确定；low = 能看到是书但书名很难辨认）
+- category：根据书名和作者推断最合适的分类，从以下选项中选一个：
+  A-马克思主义, B-哲学宗教, C-社会科学总论, D-政治法律, E-军事, F-经济,
+  G-文化科学教育体育, H-语言文字, I-文学, J-艺术, K-历史地理, N-自然科学总论,
+  O-数理科学和化学, P-天文学地球科学, Q-生物科学, R-医药卫生, S-农业科学,
+  T-工业技术, U-交通运输, V-航空航天, X-环境科学, Z-综合性图书
+  如无法确定，填"其他"
+
+只返回 JSON 数组，不要其他文字。`;
+
+    const suppliers = await getEnabledSuppliers('vision');
+    if (suppliers.length === 0) {
+      return res.status(422).json({ error: '没有启用任何视觉供应商' });
+    }
+
+    // 并行调用所有视觉供应商。任一家失败不影响其他家，结果与供应商顺序一一对应。
+    const results = await Promise.all(
+      suppliers.map(async (sup) => {
+        const started = Date.now();
+        try {
+          const text = await callOneSupplier(sup, {
+            kind: 'vision',
+            maxTokens: 2048,
+            userText: prompt,
+            image: { mediaType, data: cleanedImage },
+          });
+          const durationMs = Date.now() - started;
+          let parsed = null;
+          let parseError = null;
+          try {
+            const j = JSON.parse(cleanJson(text));
+            if (Array.isArray(j)) {
+              parsed = j;
+            } else if (j && typeof j === 'object') {
+              parsed = Array.isArray(j.books) ? j.books
+                : Array.isArray(j.result) ? j.result
+                : Array.isArray(j.data) ? j.data
+                : Array.isArray(j.items) ? j.items
+                : [j];
+            }
+          } catch (e) {
+            parseError = e.message;
+          }
+          return {
+            supplier: sup.name,
+            priority: sup.priority,
+            model: sup.visionModel,
+            ok: true,
+            durationMs,
+            text,
+            parsed,
+            parseError,
+            titleCount: Array.isArray(parsed) ? parsed.length : null,
+          };
+        } catch (err) {
+          return {
+            supplier: sup.name,
+            priority: sup.priority,
+            model: sup.visionModel,
+            ok: false,
+            durationMs: Date.now() - started,
+            error: err.message,
+          };
+        }
+      })
+    );
+
+    res.json({ count: suppliers.length, results });
+  } catch (err) {
+    console.error('[LLM recognize-compare]', err.message);
+    next(err);
+  }
+});
+
 // POST /extract-book-details — 从照片里提取书籍详情（ISBN/出版时间/定价/出版社）
 // 并尝试关联到库内已存在的那本书。
 // 请求体：{ image: base64, libraryId?: number }
 // 响应：{
-//   extracted: { title, author, isbn, publisher, publishDate, price },
+//   extracted: { title, author, isbn, publisher, edition, price, ... },
 //   match: Book | null,              // 直接命中的唯一那本（优先 ISBN）
 //   matchReason: 'isbn'|'title+author'|'title' | null,
 //   candidates: Book[],              // 有多本疑似时列出来给用户挑
@@ -301,16 +481,31 @@ router.post('/extract-book-details', async (req, res, next) => {
     const prompt = `请仔细观察这张书籍照片（封面、书脊、版权页、价签任意一种），提取书籍的详细信息。
 
 要提取的字段：
-- title: 书名（必填，看不到写"无法辨认"）
+- title: 书名（必填，看不到写无法辨认）
 - author: 作者
 - isbn: ISBN 号（10 位或 13 位数字，去除所有连字符和空格）
 - publisher: 出版社
-- publishDate: 出版时间（原样保留，可以是 "2023-05"/"2023年5月"/"1999" 等任意格式）
+- edition: 版次（原出版时间，如 "2023-05"/"2023年5月第1版"/"1999" 等，原样保留）
 - price: 定价（只返回数字，如 29.8，不要带货币符号和"元"字）
+- adaptation: 改编者
+- translator: 译者
+- authorNationality: 作者国籍
+- publisherPerson: 出版人
+- responsibleEditor: 责任编辑
+- responsiblePrinting: 责任印制
+- coverDesign: 封面设计
+- phone: 电话（出版社或发行电话）
+- address: 地址（出版社地址）
+- postalCode: 邮编
+- printingHouse: 印刷厂
+- impression: 印次（如 "2023年5月第2次印刷"）
+- format: 开本（如 "32开"）
+- printedSheets: 印张（如 "12.5"）
+- wordCount: 字数（如 "200千字"）
 
 只返回一个 JSON 对象，不要数组、不要 markdown、不要解释。看不到的字段写 null，不要编造。
 
-示例：{"title":"活着","author":"余华","isbn":"9787506365437","publisher":"作家出版社","publishDate":"2012-08","price":20.00}`;
+示例：{"title":"活着","author":"余华","isbn":"9787506365437","publisher":"作家出版社","edition":"2012-08","price":20.00}`;
 
     // validate 校验：顶级模型返回拒答文本（"I can't analyze images"）时，
     // 解析失败会让 Pool 换下一家，而不是路由层抛 502。
@@ -343,30 +538,82 @@ router.post('/extract-book-details', async (req, res, next) => {
     const rawIsbn = norm(extracted.isbn);
     const isbn = rawIsbn ? rawIsbn.replace(/[-\s]/g, '') : null;
     const publisher = norm(extracted.publisher);
-    const publishDate = norm(extracted.publishDate);
+    const edition = norm(extracted.edition);
     let price = null;
     if (extracted.price !== null && extracted.price !== undefined && extracted.price !== '') {
-      const n = Number(String(extracted.price).replace(/[¥￥$,\s元RMB]/gi, ''));
+      const n = Number(String(extracted.price).replace(/[¥\$,\s元RMB]/gi, ''));
       if (Number.isFinite(n) && n >= 0) price = n;
     }
+    const adaptation = norm(extracted.adaptation);
+    const translator = norm(extracted.translator);
+    const authorNationality = norm(extracted.authorNationality);
+    const publisherPerson = norm(extracted.publisherPerson);
+    const responsibleEditor = norm(extracted.responsibleEditor);
+    const responsiblePrinting = norm(extracted.responsiblePrinting);
+    const coverDesign = norm(extracted.coverDesign);
+    const phone = norm(extracted.phone);
+    const address = norm(extracted.address);
+    const postalCode = norm(extracted.postalCode);
+    const printingHouse = norm(extracted.printingHouse);
+    const impression = norm(extracted.impression);
+    const format_ = norm(extracted.format);
+    const printedSheets = norm(extracted.printedSheets);
+    const wordCount = norm(extracted.wordCount);
 
-    const cleanedExtracted = { title, author, isbn, publisher, publishDate, price };
+    const cleanedExtracted = { title, author, isbn, publisher, edition, price, adaptation, translator, authorNationality, publisherPerson, responsibleEditor, responsiblePrinting, coverDesign, phone, address, postalCode, printingHouse, impression, format: format_, printedSheets, wordCount };
 
     let match = null;
     let matchReason = null;
     let candidates = [];
 
-    // 匹配优先级：ISBN 精确 → title+author 精确 → title contains
-    if (isbn) {
-      const byIsbn = await prisma.book.findMany({
-        where: { ...baseWhere, isbn },
-        take: 5,
+    // 匹配优先级：图书馆缓存 → ISBN 精确 → title+author 精确 → title contains
+    // 先从系统图书馆查找缓存
+    let libraryCacheMatch = null;
+    try {
+      const sysLib = await prisma.library.findFirst({
+        where: { libraryType: 'system' },
+        select: { id: true },
       });
-      if (byIsbn.length === 1) {
-        match = byIsbn[0];
-        matchReason = 'isbn';
-      } else if (byIsbn.length > 1) {
-        candidates = byIsbn;
+      if (sysLib && title && title !== '无法辨认') {
+        if (isbn) {
+          libraryCacheMatch = await prisma.book.findFirst({
+            where: { deletedAt: null, libraryId: sysLib.id, isbn },
+          });
+        }
+        if (!libraryCacheMatch) {
+          libraryCacheMatch = await prisma.book.findFirst({
+            where: {
+              deletedAt: null,
+              libraryId: sysLib.id,
+              OR: [
+                ...(title ? [{ title: { contains: title } }] : []),
+                ...(author ? [{ author: { contains: author } }] : []),
+              ],
+            },
+          });
+        }
+        if (libraryCacheMatch) {
+          match = libraryCacheMatch;
+          matchReason = isbn && libraryCacheMatch.isbn === isbn ? 'isbn' : 'title+author';
+          match._fromCache = true;
+        }
+      }
+    } catch (e) {
+      // 缓存搜索失败不影响主流程
+    }
+
+    if (!match) {
+      if (isbn) {
+        const byIsbn = await prisma.book.findMany({
+          where: { ...baseWhere, isbn },
+          take: 5,
+        });
+        if (byIsbn.length === 1) {
+          match = byIsbn[0];
+          matchReason = 'isbn';
+        } else if (byIsbn.length > 1) {
+          candidates = byIsbn;
+        }
       }
     }
 
@@ -416,6 +663,7 @@ router.post('/extract-book-details', async (req, res, next) => {
     return res.status(502).json({ error: humanizeSupplierError(err) });
   }
 });
+
 
 // 基于书库上下文构建固定格式的 system prompt
 // 客户端仅传结构化上下文，禁止直接拼接 prompt，避免提示注入

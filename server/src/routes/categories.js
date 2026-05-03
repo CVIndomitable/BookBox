@@ -17,11 +17,20 @@ function buildTree(categories, parentId = null) {
 // 获取分类树
 router.get('/', async (req, res, next) => {
   try {
-    const { flat } = req.query;
+    const { flat, type } = req.query;
+
+    const where = {};
+    if (type === 'user') {
+      where.categoryType = 'user';
+    } else if (type === 'statutory') {
+      where.categoryType = 'statutory';
+    }
+    // type=all 或无 type 参数时不过滤
 
     const categories = await prisma.category.findMany({
+      where,
       include: { _count: { select: { books: true } } },
-      orderBy: { id: 'asc' },
+      orderBy: { categoryType: 'asc' },
     });
 
     if (flat === 'true') {
@@ -35,19 +44,25 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-// 新增分类
+// 新增分类（仅允许创建用户分类）
 router.post('/', async (req, res, next) => {
   try {
-    const { name, parentId } = req.body;
+    const { name, parentId, categoryType } = req.body;
 
     if (!name) {
       return res.status(400).json({ error: '分类名称不能为空' });
+    }
+
+    // 禁止通过 API 创建法定分类
+    if (categoryType === 'statutory') {
+      return res.status(403).json({ error: '无法手动创建法定分类' });
     }
 
     const category = await prisma.category.create({
       data: {
         name,
         parentId: parseOptionalId(parentId),
+        categoryType: 'user',
       },
     });
 
@@ -88,6 +103,15 @@ router.put('/:id', async (req, res, next) => {
     const id = parseId(req.params.id, '分类 ID');
     const { name, parentId } = req.body;
 
+    // 法定分类禁止编辑
+    const existing = await prisma.category.findUnique({ where: { id }, select: { categoryType: true } });
+    if (!existing) {
+      return res.status(404).json({ error: '分类不存在' });
+    }
+    if (existing.categoryType === 'statutory') {
+      return res.status(403).json({ error: '法定分类不可编辑' });
+    }
+
     // 防止将分类设为自己的子分类（直接 + 间接循环）
     const parsedParentId = parseOptionalId(parentId);
     if (parsedParentId && parsedParentId === id) {
@@ -120,6 +144,15 @@ router.put('/:id', async (req, res, next) => {
 router.delete('/:id', async (req, res, next) => {
   try {
     const id = parseId(req.params.id, '分类 ID');
+
+    // 法定分类禁止删除
+    const existing = await prisma.category.findUnique({ where: { id }, select: { categoryType: true } });
+    if (!existing) {
+      return res.status(404).json({ error: '分类不存在' });
+    }
+    if (existing.categoryType === 'statutory') {
+      return res.status(403).json({ error: '法定分类不可删除' });
+    }
 
     await prisma.$transaction([
       // 子分类解除关联

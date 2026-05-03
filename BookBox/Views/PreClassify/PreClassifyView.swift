@@ -473,18 +473,31 @@ private struct BookRecognitionRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Circle()
-                .fill(confidenceColor)
-                .frame(width: 10, height: 10)
+            if book.isFromCache {
+                Image(systemName: "books.vertical.fill")
+                    .foregroundStyle(.blue)
+                    .font(.caption)
+            } else {
+                Circle()
+                    .fill(confidenceColor)
+                    .frame(width: 10, height: 10)
+            }
             VStack(alignment: .leading, spacing: 3) {
                 Text(book.title)
                     .font(.body)
                 subtitleRow
             }
             Spacer()
-            Text(confidenceLabel)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(confidenceLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                if book.isFromCache {
+                    Text("来自图书馆")
+                        .font(.caption2)
+                        .foregroundStyle(.blue)
+                }
+            }
         }
     }
 

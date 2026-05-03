@@ -165,7 +165,8 @@ export function checkContainerAccess(containerKind, requiredRole = 'member') {
 export function checkBookAccess(requiredRole = 'member') {
   return async (req, res, next) => {
     try {
-      const id = parseInt(req.params.id, 10);
+      const bookIdParam = req.params.id ?? req.params.bookId;
+      const id = parseInt(bookIdParam, 10);
       if (!Number.isInteger(id) || id <= 0) {
         return res.status(400).json({ error: '缺少书籍 ID' });
       }

@@ -275,13 +275,29 @@ struct ScanResultView: View {
                         author: item.finalAuthor,
                         isbn: item.verifyResult?.isbn,
                         publisher: nil,
-                        publishDate: nil,
+                        edition: nil,
+                        adaptation: nil,
+                        translator: nil,
+                        authorNationality: nil,
+                        publisherPerson: nil,
+                        responsibleEditor: nil,
+                        responsiblePrinting: nil,
+                        coverDesign: nil,
+                        phone: nil,
+                        address: nil,
+                        postalCode: nil,
+                        printingHouse: nil,
+                        impression: nil,
+                        format: nil,
+                        printedSheets: nil,
+                        wordCount: nil,
                         price: nil,
                         coverUrl: item.verifyResult?.coverUrl,
                         categoryId: nil,
                         verifyStatus: item.verifyResult?.status ?? item.status,
                         verifySource: item.verifyResult?.source ?? (item.confidence != nil ? "mimo" : nil),
-                        rawOcrText: item.rawOcrText ?? item.title
+                        rawOcrText: item.rawOcrText ?? item.title,
+                        cacheSourceBookId: item.cacheSourceBookId
                     )
                 }
                 guard !toCreate.isEmpty else {
